@@ -1,5 +1,5 @@
 {
-  "version": "4.1",
+  "version": "4.2",
   "trained_at": "2026-04-08",
   "calibrated_for": "real_human_voice_whatsapp",
   "eo_similarity_threshold": 0.82,
@@ -9,7 +9,7 @@
   "loud_frame_energy": 0.12,
   "pitch_high_ratio": 1.4,
   "pitch_extreme_ratio": 1.8,
-  "agitation_threshold": 1.2,
+  "agitation_threshold": 5.0,
   "loud_duration_sec": 2.0,
   "score_elevated_voice": 10,
   "score_shouting": 20,
@@ -19,7 +19,7 @@
   "score_agitation": 5,
   "warning_score": 25,
   "critical_score": 50,
-  "tone_classifier_cv_accuracy": 0.9909,
+  "tone_classifier_cv_accuracy": 0.9969,
   "violation_keywords": {
     "RISHWAT": {
       "score": 50,
@@ -183,7 +183,16 @@
         "mujhse mat uljho",
         "apni haisiyat dekho",
         "sun ke raho",
-        "bolne ki zaroorat nahi"
+        "bolne ki zaroorat nahi",
+        "himmat kaise hui",
+        "himmat kaise hoi",
+        "teri himmat kaise hui",
+        "tumhari himmat",
+        "himmat hai teri",
+        "auqat mein raho",
+        "haisiyat mein raho",
+        "zuban sambhal",
+        "zuban band kar"
       ]
     },
     "HARASSMENT": {
@@ -275,5 +284,5 @@
     "ANGRY",
     "BRIBE_TONE"
   ],
-  "emotion_confidence_threshold": 0.6
+  "emotion_confidence_threshold": 0.85
 }

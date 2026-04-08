@@ -6,10 +6,10 @@
       "predicted": "NORMAL",
       "correct": true,
       "probabilities": {
-        "NORMAL": 0.998,
-        "HARSH": 0.001,
-        "ANGRY": 0.001,
-        "BRIBE_TONE": 0.001
+        "NORMAL": 1.0,
+        "HARSH": 0.0,
+        "ANGRY": 0.0,
+        "BRIBE_TONE": 0.0
       }
     },
     {
@@ -18,10 +18,10 @@
       "predicted": "HARSH",
       "correct": true,
       "probabilities": {
-        "NORMAL": 0.004,
-        "HARSH": 0.99,
-        "ANGRY": 0.003,
-        "BRIBE_TONE": 0.003
+        "NORMAL": 0.003,
+        "HARSH": 0.994,
+        "ANGRY": 0.002,
+        "BRIBE_TONE": 0.002
       }
     },
     {
@@ -31,9 +31,9 @@
       "correct": true,
       "probabilities": {
         "NORMAL": 0.001,
-        "HARSH": 0.0,
-        "ANGRY": 0.001,
-        "BRIBE_TONE": 0.998
+        "HARSH": 0.001,
+        "ANGRY": 0.0,
+        "BRIBE_TONE": 0.999
       }
     },
     {
@@ -42,10 +42,10 @@
       "predicted": "ANGRY",
       "correct": true,
       "probabilities": {
-        "NORMAL": 0.016,
-        "HARSH": 0.022,
-        "ANGRY": 0.955,
-        "BRIBE_TONE": 0.007
+        "NORMAL": 0.015,
+        "HARSH": 0.008,
+        "ANGRY": 0.972,
+        "BRIBE_TONE": 0.005
       }
     },
     {
@@ -54,9 +54,9 @@
       "predicted": "NORMAL",
       "correct": true,
       "probabilities": {
-        "NORMAL": 0.999,
+        "NORMAL": 1.0,
         "HARSH": 0.0,
-        "ANGRY": 0.001,
+        "ANGRY": 0.0,
         "BRIBE_TONE": 0.0
       }
     },
@@ -67,9 +67,9 @@
       "correct": true,
       "probabilities": {
         "NORMAL": 0.996,
-        "HARSH": 0.002,
-        "ANGRY": 0.001,
-        "BRIBE_TONE": 0.001
+        "HARSH": 0.001,
+        "ANGRY": 0.0,
+        "BRIBE_TONE": 0.003
       }
     },
     {
@@ -78,10 +78,10 @@
       "predicted": "NORMAL",
       "correct": true,
       "probabilities": {
-        "NORMAL": 0.995,
-        "HARSH": 0.001,
-        "ANGRY": 0.001,
-        "BRIBE_TONE": 0.003
+        "NORMAL": 0.999,
+        "HARSH": 0.0,
+        "ANGRY": 0.0,
+        "BRIBE_TONE": 0.001
       }
     },
     {
@@ -90,10 +90,10 @@
       "predicted": "NORMAL",
       "correct": true,
       "probabilities": {
-        "NORMAL": 0.998,
-        "HARSH": 0.001,
+        "NORMAL": 0.999,
+        "HARSH": 0.0,
         "ANGRY": 0.0,
-        "BRIBE_TONE": 0.002
+        "BRIBE_TONE": 0.001
       }
     },
     {
@@ -102,9 +102,9 @@
       "predicted": "HARSH",
       "correct": true,
       "probabilities": {
-        "NORMAL": 0.003,
-        "HARSH": 0.993,
-        "ANGRY": 0.003,
+        "NORMAL": 0.002,
+        "HARSH": 0.996,
+        "ANGRY": 0.002,
         "BRIBE_TONE": 0.001
       }
     },
@@ -114,10 +114,10 @@
       "predicted": "BRIBE_TONE",
       "correct": true,
       "probabilities": {
-        "NORMAL": 0.015,
-        "HARSH": 0.003,
-        "ANGRY": 0.002,
-        "BRIBE_TONE": 0.979
+        "NORMAL": 0.001,
+        "HARSH": 0.001,
+        "ANGRY": 0.001,
+        "BRIBE_TONE": 0.997
       }
     },
     {
@@ -126,29 +126,20 @@
       "predicted": "NORMAL",
       "correct": true,
       "probabilities": {
-        "NORMAL": 0.999,
+        "NORMAL": 1.0,
         "HARSH": 0.0,
-        "ANGRY": 0.001,
+        "ANGRY": 0.0,
         "BRIBE_TONE": 0.0
       }
     }
   ],
-  "cv_accuracy": 0.9909,
-  "val_accuracy": 1.0,
-  "enrolled_pitch_hz": 143.4,
+  "cv_accuracy": 0.9969,
   "classes": [
     "NORMAL",
     "HARSH",
     "ANGRY",
     "BRIBE_TONE"
   ],
-  "fixes_applied": [
-    "Voiceprint pitch corrected from 1853Hz to correct value",
-    "Energy thresholds raised to prevent false positives",
-    "Pitch ratio thresholds raised",
-    "Agitation threshold raised",
-    "Added emotion confidence threshold (60%)",
-    "Severity scores rebalanced"
-  ],
-  "validated_at": "2026-04-08 15:38:18"
+  "fix": "NORMAL augmented to cover rms=0.02-0.20 matching real-world audio",
+  "validated_at": "2026-04-08 17:14:24"
 }

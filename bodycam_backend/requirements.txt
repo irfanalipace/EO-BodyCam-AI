@@ -8,3 +8,4 @@ soundfile==0.12.1
 scipy==1.13.0
 eventlet==0.36.1
 python-dotenv==1.0.1
+SpeechRecognition==3.14.4

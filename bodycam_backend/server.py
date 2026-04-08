@@ -1,7 +1,8 @@
 """
-EO Bodycam AI — Backend API v3.4
+EO Bodycam AI — Backend API v4.1
 Detects: NORMAL, HARSH, ANGRY, BRIBE_TONE emotions
-Keywords: paisa, rishwat, jail, maar, gadha, chhod do + 110 more
+Keywords: paisa, rishwat, jail, maar, gadha, chhod do + 190 more
+Transcription: Google Speech (Urdu) + Whisper fallback
 Thresholds calibrated for real human voice (WhatsApp audio)
 """
 import os, json, pickle, time, uuid, tempfile
@@ -11,6 +12,7 @@ from flask_cors import CORS
 from flask_socketio import SocketIO, emit
 import numpy as np
 import librosa
+import speech_recognition as sr_lib
 
 BASE    = os.path.dirname(os.path.abspath(__file__))
 MODELS  = os.path.join(BASE, "models")
@@ -38,9 +40,12 @@ WHISPER_MODEL = None
 try:
     import whisper
     WHISPER_MODEL = whisper.load_model("tiny")
-    print("Whisper tiny ready — Urdu auto-transcription active", flush=True)
-except Exception as e:
-    print(f"Whisper not available: {e}", flush=True)
+    print("Whisper tiny loaded", flush=True)
+except Exception:
+    pass
+
+RECOGNIZER = sr_lib.Recognizer()
+print(f"Speech Recognition ready — Google Urdu transcription active", flush=True)
 
 kw_total = sum(len(v["words"]) for v in VK.values())
 print(f"EO pitch={ENROLLED_PITCH:.1f}Hz  threshold={EO_THRESHOLD}", flush=True)
@@ -128,38 +133,185 @@ def identify_eo_audio(audio, sr, speech_segs):
     return eo, float(np.mean(sims)) if sims else 0.0, float(np.max(sims)) if sims else 0.0
 
 
-def auto_transcribe(audio, sr=SR):
-    if WHISPER_MODEL is None:
-        return "", "whisper_not_installed"
+def auto_transcribe(audio, sample_rate=SR):
+    """Transcribe audio using Google Speech API (Urdu + Hindi)."""
+    import soundfile as sf
+
+    audio_clip = audio[:sample_rate * 30] if len(audio) > sample_rate * 30 else audio
+
+    # Normalize volume so Google can hear it clearly
+    peak = np.max(np.abs(audio_clip))
+    if peak > 0:
+        audio_clip = audio_clip / peak * 0.9
+
+    # Save to temp WAV
+    tmp = None
     try:
-        import soundfile as sf
-        audio_clip = audio[:sr * 30] if len(audio) > sr * 30 else audio
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-            sf.write(f.name, audio_clip.astype(np.float32), sr)
+            sf.write(f.name, audio_clip.astype(np.float32), sample_rate)
             tmp = f.name
-        result = WHISPER_MODEL.transcribe(
-            tmp, language="ur", task="transcribe",
-            verbose=False, word_timestamps=False,
-            condition_on_previous_text=False,
-            fp16=False, temperature=0, best_of=1, beam_size=1,
-        )
-        os.unlink(tmp)
-        text = result.get("text", "").strip()
-        print(f"  Transcribed: '{text[:100]}'", flush=True)
-        return text, "whisper_tiny"
     except Exception as e:
-        print(f"  Transcription error: {e}", flush=True)
+        print(f"  Failed to save temp audio: {e}", flush=True)
         return "", "error"
+
+    transcript_parts = []
+    method = "google_speech"
+
+    try:
+        with sr_lib.AudioFile(tmp) as source:
+            audio_data = RECOGNIZER.record(source)
+
+        # Try Urdu (Pakistan)
+        try:
+            text_ur = RECOGNIZER.recognize_google(audio_data, language="ur-PK")
+            if text_ur and text_ur.strip():
+                transcript_parts.append(text_ur.strip())
+                print(f"  [ur-PK] {text_ur[:100]}", flush=True)
+        except sr_lib.UnknownValueError:
+            print("  [ur-PK] no speech detected", flush=True)
+        except sr_lib.RequestError as e:
+            print(f"  [ur-PK] API error: {e}", flush=True)
+
+        # Try Hindi (India)
+        try:
+            text_hi = RECOGNIZER.recognize_google(audio_data, language="hi-IN")
+            if text_hi and text_hi.strip() and text_hi.strip() not in transcript_parts:
+                transcript_parts.append(text_hi.strip())
+                print(f"  [hi-IN] {text_hi[:100]}", flush=True)
+        except (sr_lib.UnknownValueError, sr_lib.RequestError):
+            pass
+        except (sr_lib.UnknownValueError, sr_lib.RequestError):
+            pass
+
+    except Exception as e:
+        print(f"  Google Speech error: {e}", flush=True)
+        method = "google_failed"
+
+    # Whisper fallback
+    if not transcript_parts and WHISPER_MODEL is not None:
+        try:
+            result = WHISPER_MODEL.transcribe(
+                tmp, language="ur", task="transcribe",
+                verbose=False, word_timestamps=False,
+                condition_on_previous_text=False,
+                fp16=False, temperature=0, best_of=1, beam_size=1,
+            )
+            text = result.get("text", "").strip()
+            if text:
+                transcript_parts.append(text)
+                method = "whisper_tiny"
+                print(f"  [whisper] {text[:100]}", flush=True)
+        except Exception as e:
+            print(f"  Whisper error: {e}", flush=True)
+
+    # Cleanup
+    try:
+        os.unlink(tmp)
+    except:
+        pass
+
+    if not transcript_parts:
+        print("  No transcript from any engine", flush=True)
+        return "", "no_speech_detected"
+
+    transcript = " | ".join(transcript_parts)
+    print(f"  Final [{method}]: {transcript[:150]}", flush=True)
+
+    return transcript, method
+
+
+def transliterate_urdu_to_roman(text):
+    """Convert common Urdu script words to Roman Urdu for keyword matching."""
+    mapping = {
+        # Urdu script -> Roman Urdu (for keyword matching)
+        # Bribe related
+        "\u067e\u06cc\u0633\u06d2": "paisay", "\u067e\u06cc\u0633\u0627": "paisa",
+        "\u067e\u06cc\u0633\u06d2": "paisay",
+        "\u0631\u0634\u0648\u062a": "rishwat", "\u0688\u06cc\u0644": "deal",
+        "\u0686\u06be\u0648\u0691 \u062f\u0648": "chhod do",
+        "\u062c\u0627\u0646\u06d2 \u062f\u0648": "jaane do",
+        "\u0645\u0639\u0627\u0641": "maaf",
+        # Threat related
+        "\u0645\u0627\u0631": "maar", "\u0645\u0627\u0631\u0648\u06ba\u06af\u0627": "marunga",
+        "\u062c\u06cc\u0644": "jail", "\u062b\u0627\u0646\u0627": "thana",
+        "\u06af\u0631\u0641\u062a\u0627\u0631": "arrest",
+        "\u067e\u06a9\u0691": "pakad", "\u0628\u0646\u062f": "band",
+        "\u062a\u0648\u0691": "tod", "\u062e\u062a\u0645": "khatam",
+        # Abuse related
+        "\u06af\u062f\u06be\u0627": "gadha", "\u06af\u062f\u06be\u06d2": "gadhe",
+        "\u0628\u06d2\u0648\u0642\u0648\u0641": "bewaqoof",
+        "\u0686\u067e": "chup", "\u0646\u06a9\u0644": "nikal",
+        "\u062c\u0627\u06c1\u0644": "jahil", "\u067e\u0627\u06af\u0644": "pagal",
+        "\u0628\u06d2\u0634\u0631\u0645": "besharam", "\u06a9\u0645\u06cc\u0646\u06d2": "kamine",
+        "\u06a9\u0645\u06cc\u0646\u0627": "kamina",
+        "\u062d\u0631\u0627\u0645\u06cc": "harami", "\u062d\u0631\u0627\u0645\u062e\u0648\u0631": "haramkhor",
+        "\u062c\u06be\u0648\u0679\u0627": "jhoota", "\u062c\u06be\u0648\u0679": "jhooth",
+        "\u06a9\u062a\u0651\u0627": "kutta", "\u06a9\u062a\u0651\u06d2": "kutte",
+        "\u0633\u0624\u0631": "suar",
+        "\u0646\u0627\u0644\u0627\u0626\u0642": "nalayak", "\u0646\u06a9\u0645\u0651\u0627": "nikamma",
+        "\u0628\u062f\u062a\u0645\u06cc\u0632": "badtameez",
+        "\u0630\u0644\u06cc\u0644": "zaleel", "\u0644\u0639\u0646\u062a": "laanat",
+        "\u06af\u0646\u062f\u0627": "ganda",
+        # Rude behavior
+        "\u06c1\u0645\u0651\u062a": "himmat",
+        "\u06c1\u0645\u062a \u06a9\u06cc\u0633\u06d2 \u06c1\u0648\u0626\u06cc": "himmat kaise hui",
+        "\u0632\u0628\u0627\u0646": "zuban",
+        "\u0627\u0648\u0642\u0627\u062a": "auqat", "\u062d\u06cc\u0633\u06cc\u062a": "haisiyat",
+        # Angry tone
+        "\u063a\u0644\u0637": "galat", "\u0686\u0627\u0644\u0627\u0646": "challan",
+        "\u06af\u0633\u0651\u0627": "gussa", "\u0686\u06cc\u062e": "cheekh",
+        "\u0686\u0644\u0627": "chilla", "\u0686\u06cc\u062e\u0646\u0627": "cheekhna",
+        "\u062f\u06be\u0645\u06a9\u06cc": "dhamki", "\u0688\u0627\u0646\u0679": "daant",
+        "\u0646\u0648\u06a9\u0631\u06cc": "naukri",
+        "\u0628\u0631\u0628\u0627\u062f": "barbaad",
+        # Hindi script -> Roman (for hi-IN transcription)
+        "\u092a\u0948\u0938\u093e": "paisa", "\u092a\u0948\u0938\u0947": "paisay",
+        "\u0930\u093f\u0936\u094d\u0935\u0924": "rishwat",
+        "\u091c\u0947\u0932": "jail", "\u0925\u093e\u0928\u093e": "thana",
+        "\u092e\u093e\u0930": "maar", "\u0917\u093f\u0930\u092b\u094d\u0924\u093e\u0930": "arrest",
+        "\u0917\u0927\u093e": "gadha", "\u092c\u0947\u0935\u0915\u0942\u092b": "bewaqoof",
+        "\u091a\u0941\u092a": "chup", "\u092a\u093e\u0917\u0932": "pagal",
+        "\u092c\u0947\u0936\u0930\u092e": "besharam",
+        "\u0915\u092e\u0940\u0928\u0947": "kamine", "\u0939\u0930\u093e\u092e\u0940": "harami",
+        "\u091d\u0942\u0920\u093e": "jhoota",
+        "\u0915\u0941\u0924\u094d\u0924\u093e": "kutta", "\u0938\u0942\u0905\u0930": "suar",
+        "\u0928\u093e\u0932\u093e\u092f\u0915": "nalayak",
+        "\u092c\u0926\u0924\u092e\u0940\u091c\u093c": "badtameez",
+        "\u0917\u0941\u0938\u094d\u0938\u093e": "gussa",
+        "\u0939\u093f\u092e\u094d\u092e\u0924": "himmat",
+        "\u0939\u093f\u092e\u094d\u092e\u0924 \u0915\u0948\u0938\u0947 \u0939\u0941\u0908": "himmat kaise hui",
+        "\u091a\u0940\u0916": "cheekh", "\u0927\u092e\u0915\u0940": "dhamki",
+        "\u0917\u0932\u0924": "galat", "\u091a\u093e\u0932\u093e\u0928": "challan",
+    }
+    result = text
+    for urdu, roman in mapping.items():
+        result = result.replace(urdu, roman)
+    return result
 
 
 def detect_keywords(transcript):
+    """Detect violation keywords from transcribed text.
+    Returns score and list of violations with severity."""
     if not transcript:
         return 0, []
-    text  = transcript.lower().strip()
+
+    # Normalize: lowercase + transliterate Urdu script to Roman
+    text = transcript.lower().strip()
+    text_roman = transliterate_urdu_to_roman(text)
+    # Search in both original and transliterated text
+    search_text = text + " " + text_roman
+
     score = 0
     viols = []
+
     for vtype, cfg in VK.items():
-        hits = [w for w in cfg["words"] if w in text]
+        hits = []
+        for word in cfg["words"]:
+            # Check exact word or phrase match (avoid partial matches)
+            w_lower = word.lower()
+            if w_lower in search_text:
+                hits.append(word)
+
         if hits:
             pts = cfg["score"]
             score += pts
@@ -172,6 +324,7 @@ def detect_keywords(transcript):
                 "keywords_found": hits,
                 "source":         "voice_transcription",
             })
+
     return min(score, 50), viols
 
 
@@ -267,14 +420,21 @@ def analyze_tone(eo_audio, sr):
             CONFIG["score_agitation"],
             f"Agitated speech — index {agitation:.3f}")
 
-    conf_thresh = CONFIG.get("emotion_confidence_threshold", 0.60)
-    if tone_label == "HARSH" and tone_proba.get("HARSH", 0) >= conf_thresh:
+    # Only flag emotion if:
+    # 1) Confidence for the detected class is above threshold (default 85%)
+    # 2) NORMAL confidence is below 30% (clearly not normal speech)
+    # This prevents false positives on ambiguous audio
+    conf_thresh = CONFIG.get("emotion_confidence_threshold", 0.85)
+    normal_prob = tone_proba.get("NORMAL", 0)
+    is_clearly_abnormal = normal_prob < 0.30
+
+    if tone_label == "HARSH" and tone_proba.get("HARSH", 0) >= conf_thresh and is_clearly_abnormal:
         tone_score += flag("EMOTION_HARSH", "HIGH", 15,
             f"AI detected HARSH ({tone_proba.get('HARSH',0):.0%} confidence) — aggressive speech")
-    elif tone_label == "ANGRY" and tone_proba.get("ANGRY", 0) >= conf_thresh:
+    elif tone_label == "ANGRY" and tone_proba.get("ANGRY", 0) >= conf_thresh and is_clearly_abnormal:
         tone_score += flag("EMOTION_ANGRY", "HIGH", 15,
             f"AI detected ANGRY ({tone_proba.get('ANGRY',0):.0%} confidence) — threatening speech")
-    elif tone_label == "BRIBE_TONE" and tone_proba.get("BRIBE_TONE", 0) >= conf_thresh:
+    elif tone_label == "BRIBE_TONE" and tone_proba.get("BRIBE_TONE", 0) >= conf_thresh and is_clearly_abnormal:
         tone_score += flag("EMOTION_BRIBE", "HIGH", 20,
             f"AI detected BRIBE_TONE ({tone_proba.get('BRIBE_TONE',0):.0%} confidence)")
 
@@ -368,7 +528,7 @@ def run_analysis(audio, sr, officer_id="EO_001", source="upload", filename=""):
 def health():
     return jsonify({
         "status":             "healthy",
-        "version":            "3.4",
+        "version":            "4.1",
         "whisper_available":  WHISPER_MODEL is not None,
         "models_loaded":      ["voiceprint_EO_001", "tone_classifier", "model_config"],
         "enrolled_pitch":     round(ENROLLED_PITCH, 1),
@@ -527,7 +687,7 @@ def get_samples():
 def get_keywords():
     return jsonify({
         "version":        CONFIG.get("version", "3.4"),
-        "detection":      "Auto from voice via Whisper AI",
+        "detection":      "Auto from voice via Google Speech + Whisper",
         "keywords":       {k: {
             "score":    v["score"],
             "severity": v["severity"],
@@ -587,9 +747,9 @@ def dashboard_stats():
         "recent_incidents":  list(reversed(INCIDENTS[-10:])),
         "officers_enrolled": sum(1 for o in OFFICERS.values() if o.get("enrolled")),
         "keyword_categories":list(VK.keys()),
-        "model_version":     "3.4",
+        "model_version":     CONFIG.get("version", "4.1"),
         "tone_cv_accuracy":  round(CONFIG.get("tone_classifier_cv_accuracy", 0) * 100, 1),
-        "whisper_available": WHISPER_MODEL is not None,
+        "transcription":     "Google Speech (Urdu/Hindi)" + (" + Whisper" if WHISPER_MODEL else ""),
     })
 
 
@@ -626,7 +786,7 @@ def livestream_chunk():
 
 @socketio.on("connect")
 def on_connect():
-    emit("connected", {"message": "EO Bodycam AI v3.4 ready"})
+    emit("connected", {"message": "EO Bodycam AI v4.1 ready"})
 
 @socketio.on("join_supervisor")
 def on_join(data):
@@ -638,17 +798,15 @@ if __name__ == "__main__":
     ln = TONE_MODEL["label_names"]
     emotions = list(ln.values()) if isinstance(ln, dict) else list(ln)
     print(f"\n{'='*55}")
-    print(f" EO Bodycam AI Server v3.4")
+    print(f" EO Bodycam AI Server v4.1")
     print(f" Emotions: {' / '.join(emotions)}")
-    print(f" Whisper:  {'tiny model active' if WHISPER_MODEL else 'pip install openai-whisper'}")
+    print(f" Transcription: Google Speech (Urdu/Hindi)" + (" + Whisper" if WHISPER_MODEL else ""))
     print(f" Warning:  score >= {CONFIG['warning_score']}")
     print(f" Critical: score >= {CONFIG['critical_score']}")
     print(f" Keywords: {kw_total} Urdu words in {len(VK)} categories")
-    print(f"   RISHWAT:    paisa, paisay, rishwat, chhod do...")
-    print(f"   DHAMKI:     arrest kar, jail, maar, thana...")
-    print(f"   GALI:       gadha, bewaqoof, chup kar...")
-    print(f"   RUDE:       chup raho, nikal jao, chalte bano...")
-    print(f"   HARASSMENT: akela pakad loon ga, naukri jayegi...")
+    for cat, cfg in VK.items():
+        sample = ', '.join(cfg['words'][:3])
+        print(f"   {cat} ({cfg['severity']}): {sample}...")
     print(f" SVM accuracy: {CONFIG.get('tone_classifier_cv_accuracy',0)*100:.1f}%")
     print(f" Enrolled pitch: {ENROLLED_PITCH:.1f}Hz")
     print(f" http://localhost:5050")
