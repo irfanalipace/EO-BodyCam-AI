@@ -70,7 +70,7 @@ def extract_features(audio, sr=SR):
     chroma = np.mean(librosa.feature.chroma_stft(y=audio, sr=sr), axis=1)
     rms    = float(np.mean(librosa.feature.rms(y=audio)))
     try:
-        f0, vf, _ = librosa.pyin(audio, sr=sr, fmin=65, fmax=2093)
+        f0, vf, _ = librosa.pyin(audio, sr=sr, fmin=65, fmax=500)
         fv  = f0[vf] if vf is not None else np.array([])
         f0m = float(np.mean(fv)) if len(fv) > 0 else 0.0
         f0s = float(np.std(fv))  if len(fv) > 0 else 0.0
@@ -206,7 +206,7 @@ def analyze_tone(eo_audio, sr):
     zcr_val    = float(np.mean(librosa.feature.zero_crossing_rate(y=eo_audio)))
 
     try:
-        f0, vf, _ = librosa.pyin(eo_audio, sr=sr, fmin=65, fmax=2093)
+        f0, vf, _ = librosa.pyin(eo_audio, sr=sr, fmin=65, fmax=500)
         fv        = f0[vf] if vf is not None else np.array([])
         avg_pitch = float(np.mean(fv)) if len(fv) > 0 else 0.0
         pitch_var = float(np.std(fv))  if len(fv) > 0 else 0.0
@@ -267,13 +267,14 @@ def analyze_tone(eo_audio, sr):
             CONFIG["score_agitation"],
             f"Agitated speech — index {agitation:.3f}")
 
-    if tone_label == "HARSH":
+    conf_thresh = CONFIG.get("emotion_confidence_threshold", 0.60)
+    if tone_label == "HARSH" and tone_proba.get("HARSH", 0) >= conf_thresh:
         tone_score += flag("EMOTION_HARSH", "HIGH", 15,
             f"AI detected HARSH ({tone_proba.get('HARSH',0):.0%} confidence) — aggressive speech")
-    elif tone_label == "ANGRY":
+    elif tone_label == "ANGRY" and tone_proba.get("ANGRY", 0) >= conf_thresh:
         tone_score += flag("EMOTION_ANGRY", "HIGH", 15,
             f"AI detected ANGRY ({tone_proba.get('ANGRY',0):.0%} confidence) — threatening speech")
-    elif tone_label == "BRIBE_TONE":
+    elif tone_label == "BRIBE_TONE" and tone_proba.get("BRIBE_TONE", 0) >= conf_thresh:
         tone_score += flag("EMOTION_BRIBE", "HIGH", 20,
             f"AI detected BRIBE_TONE ({tone_proba.get('BRIBE_TONE',0):.0%} confidence)")
 
@@ -373,7 +374,7 @@ def health():
         "enrolled_pitch":     round(ENROLLED_PITCH, 1),
         "eo_threshold":       EO_THRESHOLD,
         "tone_cv_acc":        round(CONFIG.get("tone_classifier_cv_accuracy", 0) * 100, 1),
-        "emotions":           list(TONE_MODEL["label_names"].values()),
+        "emotions":           list(TONE_MODEL["label_names"]) if isinstance(TONE_MODEL["label_names"], list) else list(TONE_MODEL["label_names"].values()),
         "keyword_categories": list(VK.keys()),
         "total_keywords":     sum(len(v["words"]) for v in VK.values()),
         "incidents_total":    len(INCIDENTS),
@@ -634,7 +635,8 @@ def on_join(data):
 
 if __name__ == "__main__":
     kw_total = sum(len(v["words"]) for v in VK.values())
-    emotions = list(TONE_MODEL["label_names"].values())
+    ln = TONE_MODEL["label_names"]
+    emotions = list(ln.values()) if isinstance(ln, dict) else list(ln)
     print(f"\n{'='*55}")
     print(f" EO Bodycam AI Server v3.4")
     print(f" Emotions: {' / '.join(emotions)}")
