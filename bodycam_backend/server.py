@@ -172,14 +172,12 @@ def auto_transcribe(audio, sample_rate=SR):
         except sr_lib.RequestError as e:
             print(f"  [ur-PK] API error: {e}", flush=True)
 
-        # Try Hindi (India)
+        # Try English (Pakistan) - for code-switched speech
         try:
-            text_hi = RECOGNIZER.recognize_google(audio_data, language="hi-IN")
-            if text_hi and text_hi.strip() and text_hi.strip() not in transcript_parts:
-                transcript_parts.append(text_hi.strip())
-                print(f"  [hi-IN] {text_hi[:100]}", flush=True)
-        except (sr_lib.UnknownValueError, sr_lib.RequestError):
-            pass
+            text_en = RECOGNIZER.recognize_google(audio_data, language="en-PK")
+            if text_en and text_en.strip() and text_en.strip() not in transcript_parts:
+                transcript_parts.append(text_en.strip())
+                print(f"  [en-PK] {text_en[:100]}", flush=True)
         except (sr_lib.UnknownValueError, sr_lib.RequestError):
             pass
 
@@ -221,67 +219,42 @@ def auto_transcribe(audio, sample_rate=SR):
 
 
 def transliterate_urdu_to_roman(text):
-    """Convert common Urdu script words to Roman Urdu for keyword matching."""
+    """Convert Urdu script to Roman Urdu for keyword matching."""
     mapping = {
-        # Urdu script -> Roman Urdu (for keyword matching)
-        # Bribe related
+        # Urdu script -> Roman Urdu only
+        "\u0631\u0634\u0648\u062a": "rishwat",
         "\u067e\u06cc\u0633\u06d2": "paisay", "\u067e\u06cc\u0633\u0627": "paisa",
-        "\u067e\u06cc\u0633\u06d2": "paisay",
-        "\u0631\u0634\u0648\u062a": "rishwat", "\u0688\u06cc\u0644": "deal",
         "\u0686\u06be\u0648\u0691 \u062f\u0648": "chhod do",
         "\u062c\u0627\u0646\u06d2 \u062f\u0648": "jaane do",
         "\u0645\u0639\u0627\u0641": "maaf",
-        # Threat related
-        "\u0645\u0627\u0631": "maar", "\u0645\u0627\u0631\u0648\u06ba\u06af\u0627": "marunga",
-        "\u062c\u06cc\u0644": "jail", "\u062b\u0627\u0646\u0627": "thana",
         "\u06af\u0631\u0641\u062a\u0627\u0631": "arrest",
-        "\u067e\u06a9\u0691": "pakad", "\u0628\u0646\u062f": "band",
-        "\u062a\u0648\u0691": "tod", "\u062e\u062a\u0645": "khatam",
-        # Abuse related
+        "\u062c\u06cc\u0644": "jail", "\u062b\u0627\u0646\u0627": "thana",
+        "\u0645\u0627\u0631 \u062f\u0648\u06ba \u06af\u0627": "maar doon ga",
+        "\u0645\u0627\u0631\u0648\u06ba\u06af\u0627": "marunga",
+        "\u067e\u06a9\u0691 \u0644\u0648\u06ba \u06af\u0627": "pakad loon ga",
+        "\u06af\u06be\u0631 \u06a9\u0627 \u067e\u062a\u06c1": "ghar ka pata",
+        "\u062a\u0648\u0691 \u062f\u0648\u06ba \u06af\u0627": "tod doon ga",
+        "\u062e\u062a\u0645 \u06a9\u0631": "khatam kar",
+        "\u0628\u0631\u0628\u0627\u062f \u06a9\u0631": "barbaad kar",
         "\u06af\u062f\u06be\u0627": "gadha", "\u06af\u062f\u06be\u06d2": "gadhe",
         "\u0628\u06d2\u0648\u0642\u0648\u0641": "bewaqoof",
-        "\u0686\u067e": "chup", "\u0646\u06a9\u0644": "nikal",
         "\u062c\u0627\u06c1\u0644": "jahil", "\u067e\u0627\u06af\u0644": "pagal",
-        "\u0628\u06d2\u0634\u0631\u0645": "besharam", "\u06a9\u0645\u06cc\u0646\u06d2": "kamine",
-        "\u06a9\u0645\u06cc\u0646\u0627": "kamina",
+        "\u0628\u06d2\u0634\u0631\u0645": "besharam",
+        "\u06a9\u0645\u06cc\u0646\u06d2": "kamine", "\u06a9\u0645\u06cc\u0646\u0627": "kamina",
         "\u062d\u0631\u0627\u0645\u06cc": "harami", "\u062d\u0631\u0627\u0645\u062e\u0648\u0631": "haramkhor",
-        "\u062c\u06be\u0648\u0679\u0627": "jhoota", "\u062c\u06be\u0648\u0679": "jhooth",
+        "\u062c\u06be\u0648\u0679\u0627": "jhoota",
         "\u06a9\u062a\u0651\u0627": "kutta", "\u06a9\u062a\u0651\u06d2": "kutte",
         "\u0633\u0624\u0631": "suar",
-        "\u0646\u0627\u0644\u0627\u0626\u0642": "nalayak", "\u0646\u06a9\u0645\u0651\u0627": "nikamma",
+        "\u0646\u0627\u0644\u0627\u0626\u0642": "nalayak",
         "\u0628\u062f\u062a\u0645\u06cc\u0632": "badtameez",
         "\u0630\u0644\u06cc\u0644": "zaleel", "\u0644\u0639\u0646\u062a": "laanat",
-        "\u06af\u0646\u062f\u0627": "ganda",
-        # Rude behavior
-        "\u06c1\u0645\u0651\u062a": "himmat",
         "\u06c1\u0645\u062a \u06a9\u06cc\u0633\u06d2 \u06c1\u0648\u0626\u06cc": "himmat kaise hui",
-        "\u0632\u0628\u0627\u0646": "zuban",
-        "\u0627\u0648\u0642\u0627\u062a": "auqat", "\u062d\u06cc\u0633\u06cc\u062a": "haisiyat",
-        # Angry tone
-        "\u063a\u0644\u0637": "galat", "\u0686\u0627\u0644\u0627\u0646": "challan",
-        "\u06af\u0633\u0651\u0627": "gussa", "\u0686\u06cc\u062e": "cheekh",
-        "\u0686\u0644\u0627": "chilla", "\u0686\u06cc\u062e\u0646\u0627": "cheekhna",
-        "\u062f\u06be\u0645\u06a9\u06cc": "dhamki", "\u0688\u0627\u0646\u0679": "daant",
+        "\u0632\u0628\u0627\u0646 \u0633\u0646\u0628\u06be\u0627\u0644": "zuban sambhal",
+        "\u063a\u0644\u0637 \u0686\u0627\u0644\u0627\u0646": "galat challan",
+        "\u063a\u0635\u0651\u0627": "gussa",
+        "\u0686\u06cc\u062e": "cheekh", "\u0686\u0644\u0627": "chilla",
+        "\u0688\u0627\u0646\u0679": "daant",
         "\u0646\u0648\u06a9\u0631\u06cc": "naukri",
-        "\u0628\u0631\u0628\u0627\u062f": "barbaad",
-        # Hindi script -> Roman (for hi-IN transcription)
-        "\u092a\u0948\u0938\u093e": "paisa", "\u092a\u0948\u0938\u0947": "paisay",
-        "\u0930\u093f\u0936\u094d\u0935\u0924": "rishwat",
-        "\u091c\u0947\u0932": "jail", "\u0925\u093e\u0928\u093e": "thana",
-        "\u092e\u093e\u0930": "maar", "\u0917\u093f\u0930\u092b\u094d\u0924\u093e\u0930": "arrest",
-        "\u0917\u0927\u093e": "gadha", "\u092c\u0947\u0935\u0915\u0942\u092b": "bewaqoof",
-        "\u091a\u0941\u092a": "chup", "\u092a\u093e\u0917\u0932": "pagal",
-        "\u092c\u0947\u0936\u0930\u092e": "besharam",
-        "\u0915\u092e\u0940\u0928\u0947": "kamine", "\u0939\u0930\u093e\u092e\u0940": "harami",
-        "\u091d\u0942\u0920\u093e": "jhoota",
-        "\u0915\u0941\u0924\u094d\u0924\u093e": "kutta", "\u0938\u0942\u0905\u0930": "suar",
-        "\u0928\u093e\u0932\u093e\u092f\u0915": "nalayak",
-        "\u092c\u0926\u0924\u092e\u0940\u091c\u093c": "badtameez",
-        "\u0917\u0941\u0938\u094d\u0938\u093e": "gussa",
-        "\u0939\u093f\u092e\u094d\u092e\u0924": "himmat",
-        "\u0939\u093f\u092e\u094d\u092e\u0924 \u0915\u0948\u0938\u0947 \u0939\u0941\u0908": "himmat kaise hui",
-        "\u091a\u0940\u0916": "cheekh", "\u0927\u092e\u0915\u0940": "dhamki",
-        "\u0917\u0932\u0924": "galat", "\u091a\u093e\u0932\u093e\u0928": "challan",
     }
     result = text
     for urdu, roman in mapping.items():
@@ -291,6 +264,7 @@ def transliterate_urdu_to_roman(text):
 
 def detect_keywords(transcript):
     """Detect violation keywords from transcribed text.
+    Only shows unique Roman Urdu keywords (no Urdu script duplicates).
     Returns score and list of violations with severity."""
     if not transcript:
         return 0, []
@@ -298,21 +272,29 @@ def detect_keywords(transcript):
     # Normalize: lowercase + transliterate Urdu script to Roman
     text = transcript.lower().strip()
     text_roman = transliterate_urdu_to_roman(text)
-    # Search in both original and transliterated text
     search_text = text + " " + text_roman
 
     score = 0
     viols = []
 
     for vtype, cfg in VK.items():
-        hits = []
+        hits = set()
         for word in cfg["words"]:
-            # Check exact word or phrase match (avoid partial matches)
             w_lower = word.lower()
             if w_lower in search_text:
-                hits.append(word)
+                # Only show Roman Urdu version (skip Urdu/Hindi script for display)
+                if all(ord(c) < 256 for c in word):
+                    hits.add(word)
+                else:
+                    # Find the Roman equivalent already in hits, or add transliterated
+                    roman = transliterate_urdu_to_roman(word)
+                    if roman != word:
+                        hits.add(roman)
+                    else:
+                        hits.add(word)
 
         if hits:
+            unique_hits = sorted(hits)
             pts = cfg["score"]
             score += pts
             viols.append({
@@ -320,8 +302,8 @@ def detect_keywords(transcript):
                 "severity":       cfg["severity"],
                 "score":          pts,
                 "label":          cfg.get("label", vtype),
-                "detail":         f"Spoken words detected: {', '.join(hits)}",
-                "keywords_found": hits,
+                "detail":         f"Spoken words detected: {', '.join(unique_hits)}",
+                "keywords_found": unique_hits,
                 "source":         "voice_transcription",
             })
 
@@ -329,8 +311,12 @@ def detect_keywords(transcript):
 
 
 def analyze_tone(eo_audio, sr):
-    tone_label = "UNKNOWN"
-    tone_proba = {}
+    """Acoustic-based tone analysis.
+    Step 1: Normalize audio volume (so WhatsApp/quiet recordings work)
+    Step 2: Measure energy, pitch, agitation on normalized audio
+    Step 3: Compare relative loudness within the clip (loud vs quiet parts)
+    """
+    tone_proba = {"NORMAL": 1.0, "HARSH": 0.0, "ANGRY": 0.0, "BRIBE_TONE": 0.0}
     acoustics  = {
         "avg_energy": 0.0, "avg_pitch_hz": 0.0,
         "zcr": 0.0, "pitch_variance": 0.0,
@@ -341,36 +327,49 @@ def analyze_tone(eo_audio, sr):
     tone_viols = []
 
     if len(eo_audio) < sr * 0.3:
-        return tone_label, tone_proba, acoustics, tone_score, tone_viols
+        return "NORMAL", tone_proba, acoustics, 0, []
 
-    mid   = len(eo_audio) // 2
-    chunk = eo_audio[max(0, mid - sr):min(len(eo_audio), mid + sr)]
-    vec   = extract_features(chunk, sr)
-    pred  = TONE_MODEL["model"].predict([vec])[0]
-    prob  = TONE_MODEL["model"].predict_proba([vec])[0]
-    tone_label = TONE_MODEL["label_names"][int(pred)]
-    tone_proba = {
-        TONE_MODEL["label_names"][i]: round(float(p), 3)
-        for i, p in enumerate(prob)
-    }
+    # ── NORMALIZE audio volume before analysis ──
+    # This makes WhatsApp recordings (rms=0.05) comparable to loud recordings (rms=0.45)
+    peak = np.max(np.abs(eo_audio))
+    if peak > 0.01:
+        norm_audio = eo_audio / peak * 0.9
+    else:
+        norm_audio = eo_audio
 
-    rms_energy = float(np.sqrt(np.mean(eo_audio ** 2)))
-    rms_frames = librosa.feature.rms(y=eo_audio)[0]
-    zcr_val    = float(np.mean(librosa.feature.zero_crossing_rate(y=eo_audio)))
+    # ── Measure features on NORMALIZED audio ──
+    rms_energy = float(np.sqrt(np.mean(norm_audio ** 2)))
+    rms_frames = librosa.feature.rms(y=norm_audio)[0]
+    zcr_val    = float(np.mean(librosa.feature.zero_crossing_rate(y=norm_audio)))
 
     try:
-        f0, vf, _ = librosa.pyin(eo_audio, sr=sr, fmin=65, fmax=500)
+        f0, vf, _ = librosa.pyin(norm_audio, sr=sr, fmin=65, fmax=500)
         fv        = f0[vf] if vf is not None else np.array([])
         avg_pitch = float(np.mean(fv)) if len(fv) > 0 else 0.0
         pitch_var = float(np.std(fv))  if len(fv) > 0 else 0.0
     except:
         avg_pitch, pitch_var = 0.0, 0.0
 
-    mfcc_delta    = librosa.feature.delta(librosa.feature.mfcc(y=eo_audio, sr=sr, n_mfcc=13))
+    mfcc_delta    = librosa.feature.delta(librosa.feature.mfcc(y=norm_audio, sr=sr, n_mfcc=13))
     agitation     = float(np.mean(np.abs(mfcc_delta)))
+
+    # ── Measure RELATIVE loudness within clip ──
+    # Compare loudest parts vs quietest parts (detects shouting vs calm within same audio)
+    rms_sorted = np.sort(rms_frames)
+    if len(rms_sorted) > 10:
+        quiet_avg = float(np.mean(rms_sorted[:len(rms_sorted)//4]))     # quietest 25%
+        loud_avg  = float(np.mean(rms_sorted[-len(rms_sorted)//4:]))    # loudest 25%
+        loudness_ratio = loud_avg / (quiet_avg + 1e-6)                   # how much louder
+    else:
+        loudness_ratio = 1.0
+
     loud_frames   = np.sum(rms_frames > CONFIG["loud_frame_energy"])
     loud_duration = float(loud_frames * 512 / sr)
     ratio         = avg_pitch / ENROLLED_PITCH if ENROLLED_PITCH > 0 else 0
+
+    print(f"  Tone: energy={rms_energy:.3f} pitch={avg_pitch:.0f}Hz ratio={ratio:.2f} "
+          f"pitch_var={pitch_var:.1f} agitation={agitation:.3f} "
+          f"loudness_ratio={loudness_ratio:.1f} loud_dur={loud_duration:.1f}s", flush=True)
 
     acoustics = {
         "avg_energy":        round(rms_energy, 4),
@@ -390,25 +389,27 @@ def analyze_tone(eo_audio, sr):
         })
         return pts
 
+    # ── Violation detection on NORMALIZED audio ──
+
     if rms_energy > CONFIG["energy_normal_max"]:
         tone_score += flag("ELEVATED_VOICE", "MEDIUM",
             CONFIG["score_elevated_voice"],
-            f"Raised voice — energy {rms_energy:.4f}")
+            f"Raised voice: energy {rms_energy:.4f}")
 
     if rms_energy > CONFIG["energy_shouting_min"]:
         tone_score += flag("SHOUTING", "HIGH",
             CONFIG["score_shouting"],
-            f"Shouting detected — energy {rms_energy:.4f}")
+            f"Shouting detected: energy {rms_energy:.4f}")
 
     if ratio > CONFIG["pitch_high_ratio"] and avg_pitch > 0:
         tone_score += flag("HIGH_PITCH", "MEDIUM",
             CONFIG["score_high_pitch"],
-            f"Angry pitch {avg_pitch:.0f}Hz = {ratio:.2f}x above {ENROLLED_PITCH:.0f}Hz")
+            f"High pitch {avg_pitch:.0f}Hz = {ratio:.2f}x above baseline {ENROLLED_PITCH:.0f}Hz")
 
     if ratio > CONFIG["pitch_extreme_ratio"] and avg_pitch > 0:
         tone_score += flag("EXTREME_PITCH", "HIGH",
             CONFIG["score_extreme_pitch"],
-            f"Extreme anger — pitch {avg_pitch:.0f}Hz ({ratio:.2f}x baseline)")
+            f"Extreme pitch {avg_pitch:.0f}Hz ({ratio:.2f}x baseline)")
 
     if loud_duration > CONFIG["loud_duration_sec"]:
         tone_score += flag("PROLONGED_SHOUTING", "HIGH",
@@ -418,25 +419,59 @@ def analyze_tone(eo_audio, sr):
     if agitation > CONFIG["agitation_threshold"]:
         tone_score += flag("AGITATED_SPEECH", "MEDIUM",
             CONFIG["score_agitation"],
-            f"Agitated speech — index {agitation:.3f}")
+            f"Agitated speech: index {agitation:.3f}")
 
-    # Only flag emotion if:
-    # 1) Confidence for the detected class is above threshold (default 85%)
-    # 2) NORMAL confidence is below 30% (clearly not normal speech)
-    # This prevents false positives on ambiguous audio
-    conf_thresh = CONFIG.get("emotion_confidence_threshold", 0.85)
-    normal_prob = tone_proba.get("NORMAL", 0)
-    is_clearly_abnormal = normal_prob < 0.30
+    # Loudness variation within clip (someone raising voice)
+    if loudness_ratio > 4.0:
+        tone_score += flag("VOICE_RAISED", "MEDIUM", 10,
+            f"Voice raised {loudness_ratio:.1f}x louder than calm parts")
 
-    if tone_label == "HARSH" and tone_proba.get("HARSH", 0) >= conf_thresh and is_clearly_abnormal:
-        tone_score += flag("EMOTION_HARSH", "HIGH", 15,
-            f"AI detected HARSH ({tone_proba.get('HARSH',0):.0%} confidence) — aggressive speech")
-    elif tone_label == "ANGRY" and tone_proba.get("ANGRY", 0) >= conf_thresh and is_clearly_abnormal:
-        tone_score += flag("EMOTION_ANGRY", "HIGH", 15,
-            f"AI detected ANGRY ({tone_proba.get('ANGRY',0):.0%} confidence) — threatening speech")
-    elif tone_label == "BRIBE_TONE" and tone_proba.get("BRIBE_TONE", 0) >= conf_thresh and is_clearly_abnormal:
-        tone_score += flag("EMOTION_BRIBE", "HIGH", 20,
-            f"AI detected BRIBE_TONE ({tone_proba.get('BRIBE_TONE',0):.0%} confidence)")
+    # High pitch variance = emotional instability / anger
+    if pitch_var > 40:
+        tone_score += flag("PITCH_UNSTABLE", "MEDIUM", 5,
+            f"Unstable pitch: variance {pitch_var:.1f}Hz (angry/emotional)")
+
+    # ── Determine tone label from signals ──
+    harsh_signals = 0
+    if rms_energy > CONFIG["energy_normal_max"]:
+        harsh_signals += 1
+    if ratio > CONFIG["pitch_high_ratio"] and avg_pitch > 0:
+        harsh_signals += 1
+    if pitch_var > 40:
+        harsh_signals += 1
+    if loud_duration > CONFIG["loud_duration_sec"]:
+        harsh_signals += 1
+    if loudness_ratio > 4.0:
+        harsh_signals += 1
+    if agitation > CONFIG["agitation_threshold"]:
+        harsh_signals += 1
+
+    if harsh_signals >= 3:
+        tone_label = "ANGRY"
+        tone_proba = {"NORMAL": 0.05, "HARSH": 0.15, "ANGRY": 0.75, "BRIBE_TONE": 0.05}
+    elif harsh_signals >= 2:
+        tone_label = "HARSH"
+        tone_proba = {"NORMAL": 0.10, "HARSH": 0.75, "ANGRY": 0.10, "BRIBE_TONE": 0.05}
+    elif harsh_signals >= 1:
+        tone_label = "HARSH"
+        tone_proba = {"NORMAL": 0.40, "HARSH": 0.45, "ANGRY": 0.05, "BRIBE_TONE": 0.10}
+    elif rms_energy < 0.03 and ratio < 0.8 and avg_pitch > 0:
+        tone_label = "BRIBE_TONE"
+        tone_proba = {"NORMAL": 0.20, "HARSH": 0.05, "ANGRY": 0.05, "BRIBE_TONE": 0.70}
+    else:
+        tone_label = "NORMAL"
+        # Calculate actual normal confidence based on how far from thresholds
+        normal_conf = 1.0
+        if rms_energy > 0:
+            normal_conf -= min(0.3, rms_energy / CONFIG["energy_normal_max"] * 0.15)
+        if ratio > 0:
+            normal_conf -= min(0.2, max(0, ratio - 0.8) * 0.2)
+        normal_conf = max(0.50, min(0.99, normal_conf))
+        harsh_conf  = round((1 - normal_conf) * 0.6, 3)
+        bribe_conf  = round((1 - normal_conf) * 0.3, 3)
+        angry_conf  = round((1 - normal_conf) * 0.1, 3)
+        tone_proba  = {"NORMAL": round(normal_conf, 3), "HARSH": harsh_conf,
+                        "ANGRY": angry_conf, "BRIBE_TONE": bribe_conf}
 
     return tone_label, tone_proba, acoustics, min(tone_score, 50), tone_viols
 
@@ -805,9 +840,11 @@ if __name__ == "__main__":
     print(f" Critical: score >= {CONFIG['critical_score']}")
     print(f" Keywords: {kw_total} Urdu words in {len(VK)} categories")
     for cat, cfg in VK.items():
-        sample = ', '.join(cfg['words'][:3])
+        # Only print ASCII keywords to avoid encoding errors
+        ascii_words = [w for w in cfg['words'] if all(ord(c) < 256 for c in w)][:3]
+        sample = ', '.join(ascii_words) if ascii_words else '...'
         print(f"   {cat} ({cfg['severity']}): {sample}...")
-    print(f" SVM accuracy: {CONFIG.get('tone_classifier_cv_accuracy',0)*100:.1f}%")
+    print(f" Tone detection: Acoustic-based (energy, pitch, agitation)")
     print(f" Enrolled pitch: {ENROLLED_PITCH:.1f}Hz")
     print(f" http://localhost:5050")
     print(f"{'='*55}\n")
