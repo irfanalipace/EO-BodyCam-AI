@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip cache:*)",
+      "Bash(rm -rf /c/Users/irfan/AppData/Local/Temp/pip-*)",
+      "Bash(rm -rf /c/Users/irfan/AppData/Local/Temp/torch_*)",
+      "Bash(rm -rf /c/Users/irfan/AppData/Local/Temp/tmp*)"
+    ]
+  }
+}
