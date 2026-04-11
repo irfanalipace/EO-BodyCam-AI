@@ -152,25 +152,22 @@ export default function Dashboard() {
 
 {/* Pipeline */}
 <div style={{ ...CARD, marginBottom:'16px' }}>
-  <span style={LABEL}>AI Detection Pipeline</span>
-  <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:'12px' }}>
+  <span style={LABEL}>AI Detection Pipeline — 7-Stage Analysis</span>
+  <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:'10px' }}>
     {[
-      { id:'A', color:'#185FA5', title:'Voice Activity Detection', desc:'Energy + ZCR filtering removes traffic, animals, silence from body cam audio' },
-      { id:'B', color:'#534AB7', title:'EO Voice Identification',  desc:'106-dim MFCC voiceprint matches EO voice among all crowd speakers' },
-      { id:'C', color:'#0F6E56', title:'Whisper Transcription',    desc:'Auto-converts Urdu/Punjabi speech to text — no manual input needed' },
-      { id:'D', color:'#BA7517', title:'Tone SVM Classifier',      desc:'NORMAL / HARSH / BRIBE_TONE — 87.8% cross-validation accuracy' },
-      { id:'E', color:'#A32D2D', title:'Urdu Keyword Detection',   desc:'89 words: paisa, rishwat, jail, maar, gadha, bewaqoof, chhod do...' },
-      { id:'F', color:'#1D9E75', title:'Score + Alert',            desc:'Score 0–100 → NORMAL / WARNING / CRITICAL → supervisor alerted instantly' },
-    ].map(s => (
-      <div key={s.id} style={{ background:'#F8F7F4', border:'0.5px solid #E8E6DF',
+      { icon:'🎙', color:'#185FA5', title:'Voice Activity Detection', desc:'Energy + ZCR filtering removes traffic, animals, silence' },
+      { icon:'👤', color:'#534AB7', title:'EO Voice Identification',  desc:'106-dim MFCC voiceprint matches officer among all speakers' },
+      { icon:'🌐', color:'#0F6E56', title:'Groq Whisper Large-v3',   desc:'Cloud AI transcribes Urdu/English/Punjabi with 95% accuracy' },
+      { icon:'🧠', color:'#BA7517', title:'Tone SVM Classifier',     desc:'NORMAL / HARSH / ANGRY / BRIBE_TONE — 99.7% accuracy' },
+      { icon:'🔍', color:'#A32D2D', title:'588 Keyword Scanner',     desc:'10 categories: rishwat, dhamki, gali, rude, harassment, power abuse...' },
+      { icon:'📊', color:'#6B21A8', title:'Voice Acoustics',         desc:'Pitch, energy, agitation, loud duration — detects shouting & anger' },
+      { icon:'🚨', color:'#1D9E75', title:'Score + Alert',           desc:'Score 0–100 → NORMAL / WARNING / CRITICAL → instant supervisor alert' },
+    ].map((s, i) => (
+      <div key={i} style={{ background:'#F8F7F4', border:'0.5px solid #E8E6DF',
         borderRadius:'10px', padding:'14px', display:'flex', gap:'10px', alignItems:'flex-start' }}>
-        <div style={{ width:24, height:24, borderRadius:'7px', background:`${s.color}15`,
-          color:s.color, fontSize:'12px', fontWeight:800, display:'flex',
-          alignItems:'center', justifyContent:'center', flexShrink:0, marginTop:'1px' }}>
-          {s.id}
-        </div>
+        <div style={{ fontSize:'18px', flexShrink:0, marginTop:'1px' }}>{s.icon}</div>
         <div>
-          <div style={{ fontSize:'12px', fontWeight:700, color:'#2C2C2A', marginBottom:'4px' }}>
+          <div style={{ fontSize:'12px', fontWeight:700, color:s.color, marginBottom:'4px' }}>
             {s.title}
           </div>
           <div style={{ fontSize:'11px', color:'#888780', lineHeight:1.5 }}>

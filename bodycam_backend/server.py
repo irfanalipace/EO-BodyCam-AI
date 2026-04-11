@@ -197,41 +197,80 @@ def normalize_urdu_text(text):
 
 
 def _groq_transcribe(audio_path):
-    """Transcribe via Groq API (free whisper-large-v3 — best Urdu accuracy)."""
+    """Transcribe via Groq API — uses whisper-large-v3 (best Urdu accuracy).
+
+    Returns tuple: (urdu_text, english_text)
+    - urdu_text: Urdu script transcription
+    - english_text: English/Roman translation of same audio
+    """
     import requests
     groq_key = os.environ.get("GROQ_API_KEY", "")
     if not groq_key:
-        return ""
+        return "", ""
+
+    headers = {"Authorization": f"Bearer {groq_key}"}
+    urdu_text = ""
+    english_text = ""
+
+    # Urdu context prompt — helps Whisper understand Pakistani Urdu vocabulary
+    urdu_prompt = (
+        "بکواس بند کرو، چپ رہو، تمیز سے بات کرو، رشوت، پیسے دے دو، "
+        "چالان، گرفتار، جیل، بدتمیز، کمینا، حرامی، گدھا، پاگل، "
+        "ریٹ لسٹ، اسٹیشن، دکان، نوکری، ایٹیٹیوڈ"
+    )
+
+    # 1. Urdu transcription (Urdu script output)
     try:
         with open(audio_path, "rb") as f:
             resp = requests.post(
                 "https://api.groq.com/openai/v1/audio/transcriptions",
-                headers={"Authorization": f"Bearer {groq_key}"},
+                headers=headers,
                 files={"file": ("audio.wav", f, "audio/wav")},
                 data={
                     "model": "whisper-large-v3",
                     "language": "ur",
                     "response_format": "text",
+                    "prompt": urdu_prompt,
                 },
                 timeout=30,
             )
-        if resp.status_code == 200:
-            text = resp.text.strip()
-            if text:
-                print(f"  [groq-large-v3] {text[:200]}", flush=True)
-                return text
+        if resp.status_code == 200 and resp.text.strip():
+            urdu_text = resp.text.strip()
+            print(f"  [groq-ur] {urdu_text[:200]}", flush=True)
         else:
-            print(f"  Groq API error {resp.status_code}: {resp.text[:100]}", flush=True)
+            print(f"  Groq Urdu error {resp.status_code}: {resp.text[:100]}", flush=True)
     except Exception as e:
-        print(f"  Groq API error: {e}", flush=True)
-    return ""
+        print(f"  Groq Urdu error: {e}", flush=True)
+
+    # 2. English translation (Roman/English output — catches Roman Urdu keywords)
+    try:
+        with open(audio_path, "rb") as f:
+            resp = requests.post(
+                "https://api.groq.com/openai/v1/audio/translations",
+                headers=headers,
+                files={"file": ("audio.wav", f, "audio/wav")},
+                data={
+                    "model": "whisper-large-v3",
+                    "response_format": "text",
+                },
+                timeout=30,
+            )
+        if resp.status_code == 200 and resp.text.strip():
+            english_text = resp.text.strip()
+            print(f"  [groq-en] {english_text[:200]}", flush=True)
+        else:
+            print(f"  Groq English error {resp.status_code}: {resp.text[:100]}", flush=True)
+    except Exception as e:
+        print(f"  Groq English error: {e}", flush=True)
+
+    return urdu_text, english_text
 
 
 def auto_transcribe(audio, sample_rate=SR):
     """Transcribe audio — Urdu, English, Punjabi.
 
-    Priority pipeline (stops at first success):
-      1. Groq API whisper-large-v3 (FREE, best Urdu accuracy)
+    Pipeline:
+      1. Groq API whisper-large-v3 (Urdu + English translation)
       2. Local faster-whisper small (fallback if Groq unavailable)
       3. Google Speech ur-PK + en-PK + pa-PK (extra coverage, parallel)
     """
@@ -259,12 +298,16 @@ def auto_transcribe(audio, sample_rate=SR):
     method = "none"
 
     # ═══════════════════════════════════════════════════════════
-    #  1. GROQ API — whisper-large-v3 (FREE, best accuracy for Urdu)
+    #  1. GROQ API — whisper-large-v3 (Urdu transcription + English translation)
     # ═══════════════════════════════════════════════════════════
-    groq_text = _groq_transcribe(tmp)
-    if groq_text:
-        transcript_parts.append(groq_text)
+    groq_ur, groq_en = _groq_transcribe(tmp)
+    if groq_ur:
+        transcript_parts.append(groq_ur)
         method = "groq_whisper_large_v3"
+    if groq_en and groq_en not in transcript_parts:
+        transcript_parts.append(groq_en)
+        if method == "none":
+            method = "groq_whisper_large_v3"
 
     # ═══════════════════════════════════════════════════════════
     #  2. LOCAL WHISPER — fallback if Groq fails or no API key
@@ -639,7 +682,12 @@ def detect_keywords(transcript):
 #  TONE ANALYSIS — acoustic features (energy, pitch, agitation)
 # ═══════════════════════════════════════════════════════════════
 def analyze_tone(eo_audio, sr):
-    """Acoustic-based tone analysis with normalized audio."""
+    """Acoustic-based tone analysis using RAW audio energy (no normalization).
+
+    The key insight: we must NOT normalize volume before measuring energy,
+    because normalization makes whispers and shouts look identical.
+    We use raw RMS for loudness, but normalized audio for pitch extraction only.
+    """
     tone_proba = {"NORMAL": 1.0, "HARSH": 0.0, "ANGRY": 0.0, "BRIBE_TONE": 0.0}
     acoustics  = {
         "avg_energy": 0.0, "avg_pitch_hz": 0.0,
@@ -653,17 +701,14 @@ def analyze_tone(eo_audio, sr):
     if len(eo_audio) < sr * 0.3:
         return "NORMAL", tone_proba, acoustics, 0, []
 
-    # Normalize audio volume
-    peak = np.max(np.abs(eo_audio))
-    if peak > 0.01:
-        norm_audio = eo_audio / peak * 0.9
-    else:
-        norm_audio = eo_audio
+    # ── RAW energy (DO NOT normalize — this measures actual loudness) ──
+    raw_rms = float(np.sqrt(np.mean(eo_audio ** 2)))
+    raw_rms_frames = librosa.feature.rms(y=eo_audio)[0]
+    zcr_val = float(np.mean(librosa.feature.zero_crossing_rate(y=eo_audio)))
 
-    # Measure features on normalized audio
-    rms_energy = float(np.sqrt(np.mean(norm_audio ** 2)))
-    rms_frames = librosa.feature.rms(y=norm_audio)[0]
-    zcr_val    = float(np.mean(librosa.feature.zero_crossing_rate(y=norm_audio)))
+    # ── Normalized audio ONLY for pitch extraction (pitch needs clean signal) ──
+    peak = np.max(np.abs(eo_audio))
+    norm_audio = eo_audio / peak * 0.9 if peak > 0.01 else eo_audio
 
     try:
         f0, vf, _ = librosa.pyin(norm_audio, sr=sr, fmin=65, fmax=500)
@@ -676,25 +721,40 @@ def analyze_tone(eo_audio, sr):
     mfcc_delta = librosa.feature.delta(librosa.feature.mfcc(y=norm_audio, sr=sr, n_mfcc=13))
     agitation  = float(np.mean(np.abs(mfcc_delta)))
 
-    # Relative loudness within clip
-    rms_sorted = np.sort(rms_frames)
-    if len(rms_sorted) > 10:
-        quiet_avg = float(np.mean(rms_sorted[:len(rms_sorted)//4]))
-        loud_avg  = float(np.mean(rms_sorted[-len(rms_sorted)//4:]))
+    # ── Dynamic loudness analysis (compares loud vs quiet parts within clip) ──
+    rms_sorted = np.sort(raw_rms_frames)
+    n_frames = len(rms_sorted)
+    if n_frames > 10:
+        quiet_avg = float(np.mean(rms_sorted[:n_frames//4]))
+        loud_avg  = float(np.mean(rms_sorted[-n_frames//4:]))
         loudness_ratio = loud_avg / (quiet_avg + 1e-6)
+        # Percentile-based loudness (more robust than mean)
+        p90_energy = float(np.percentile(raw_rms_frames, 90))
+        p50_energy = float(np.percentile(raw_rms_frames, 50))
     else:
         loudness_ratio = 1.0
+        p90_energy = raw_rms
+        p50_energy = raw_rms
 
-    loud_frames   = np.sum(rms_frames > CONFIG["loud_frame_energy"])
-    loud_duration = float(loud_frames * 512 / sr)
-    ratio         = avg_pitch / ENROLLED_PITCH if ENROLLED_PITCH > 0 else 0
+    # Count frames above different thresholds
+    loud_frames     = np.sum(raw_rms_frames > 0.08)
+    shouting_frames = np.sum(raw_rms_frames > 0.15)
+    loud_duration   = float(loud_frames * 512 / sr)
+    shout_duration  = float(shouting_frames * 512 / sr)
+    ratio           = avg_pitch / ENROLLED_PITCH if ENROLLED_PITCH > 0 else 0
 
-    print(f"  Tone: energy={rms_energy:.3f} pitch={avg_pitch:.0f}Hz ratio={ratio:.2f} "
-          f"pitch_var={pitch_var:.1f} agitation={agitation:.3f} "
-          f"loudness_ratio={loudness_ratio:.1f} loud_dur={loud_duration:.1f}s", flush=True)
+    # Spectral features for harsh vs soft detection
+    spectral_centroid = float(np.mean(librosa.feature.spectral_centroid(y=eo_audio, sr=sr)))
+    spectral_rolloff  = float(np.mean(librosa.feature.spectral_rolloff(y=eo_audio, sr=sr)))
+
+    print(f"  Tone: raw_rms={raw_rms:.4f} p90={p90_energy:.4f} p50={p50_energy:.4f} "
+          f"pitch={avg_pitch:.0f}Hz ratio={ratio:.2f} pitch_var={pitch_var:.1f} "
+          f"agitation={agitation:.3f} loudness_ratio={loudness_ratio:.1f} "
+          f"loud_dur={loud_duration:.1f}s shout_dur={shout_duration:.1f}s "
+          f"centroid={spectral_centroid:.0f} zcr={zcr_val:.4f}", flush=True)
 
     acoustics = {
-        "avg_energy":        round(rms_energy, 4),
+        "avg_energy":        round(raw_rms, 4),
         "avg_pitch_hz":      round(avg_pitch, 1),
         "zcr":               round(zcr_val, 4),
         "pitch_variance":    round(pitch_var, 1),
@@ -711,85 +771,133 @@ def analyze_tone(eo_audio, sr):
         })
         return pts
 
-    # Violation detection
-    if rms_energy > CONFIG["energy_normal_max"]:
-        tone_score += flag("ELEVATED_VOICE", "MEDIUM",
-            CONFIG["score_elevated_voice"],
-            f"Raised voice: energy {rms_energy:.4f}")
+    # ═══════════════════════════════════════════════════════════
+    #  SCORING — based on raw energy, not normalized
+    # ═══════════════════════════════════════════════════════════
 
-    if rms_energy > CONFIG["energy_shouting_min"]:
-        tone_score += flag("SHOUTING", "HIGH",
-            CONFIG["score_shouting"],
-            f"Shouting detected: energy {rms_energy:.4f}")
+    # 1. Overall loudness (raw RMS — louder voice = higher score)
+    if raw_rms > 0.15:
+        tone_score += flag("SHOUTING", "CRITICAL", 20,
+            f"Shouting detected — very loud voice (energy {raw_rms:.3f})")
+    elif raw_rms > 0.08:
+        tone_score += flag("LOUD_VOICE", "HIGH", 12,
+            f"Loud/raised voice detected (energy {raw_rms:.3f})")
+    elif raw_rms > 0.04:
+        tone_score += flag("ELEVATED_VOICE", "MEDIUM", 5,
+            f"Slightly raised voice (energy {raw_rms:.3f})")
 
-    if ratio > CONFIG["pitch_high_ratio"] and avg_pitch > 0:
-        tone_score += flag("HIGH_PITCH", "MEDIUM",
-            CONFIG["score_high_pitch"],
-            f"High pitch {avg_pitch:.0f}Hz = {ratio:.2f}x above baseline {ENROLLED_PITCH:.0f}Hz")
+    # 2. Peak loudness (p90 — catches bursts of shouting even in otherwise calm audio)
+    if p90_energy > 0.20:
+        tone_score += flag("BURST_SHOUTING", "HIGH", 10,
+            f"Bursts of shouting detected (peak energy {p90_energy:.3f})")
 
-    if ratio > CONFIG["pitch_extreme_ratio"] and avg_pitch > 0:
-        tone_score += flag("EXTREME_PITCH", "HIGH",
-            CONFIG["score_extreme_pitch"],
-            f"Extreme pitch {avg_pitch:.0f}Hz ({ratio:.2f}x baseline)")
+    # 3. Pitch analysis
+    if ratio > 1.6 and avg_pitch > 0:
+        tone_score += flag("EXTREME_PITCH", "HIGH", 12,
+            f"Extreme high pitch {avg_pitch:.0f}Hz — {ratio:.1f}x above baseline {ENROLLED_PITCH:.0f}Hz")
+    elif ratio > 1.3 and avg_pitch > 0:
+        tone_score += flag("HIGH_PITCH", "MEDIUM", 7,
+            f"Raised pitch {avg_pitch:.0f}Hz — {ratio:.1f}x above baseline {ENROLLED_PITCH:.0f}Hz")
 
-    if loud_duration > CONFIG["loud_duration_sec"]:
-        tone_score += flag("PROLONGED_SHOUTING", "HIGH",
-            CONFIG["score_prolonged_loud"],
-            f"Sustained loud speech {loud_duration:.1f}s")
+    # 4. Pitch instability (angry/emotional speech has high variance)
+    if pitch_var > 50:
+        tone_score += flag("PITCH_UNSTABLE", "HIGH", 8,
+            f"Very unstable pitch (variance {pitch_var:.0f}Hz) — angry/emotional speech")
+    elif pitch_var > 30:
+        tone_score += flag("PITCH_UNSTABLE", "MEDIUM", 4,
+            f"Unstable pitch (variance {pitch_var:.0f}Hz)")
 
-    if agitation > CONFIG["agitation_threshold"]:
-        tone_score += flag("AGITATED_SPEECH", "MEDIUM",
-            CONFIG["score_agitation"],
-            f"Agitated speech: index {agitation:.3f}")
+    # 5. Sustained loud speech (duration matters)
+    if shout_duration > 3.0:
+        tone_score += flag("PROLONGED_SHOUTING", "CRITICAL", 15,
+            f"Sustained shouting for {shout_duration:.1f}s")
+    elif loud_duration > 2.0:
+        tone_score += flag("PROLONGED_LOUD", "HIGH", 8,
+            f"Sustained loud speech for {loud_duration:.1f}s")
 
-    if loudness_ratio > 4.0:
-        tone_score += flag("VOICE_RAISED", "MEDIUM", 10,
-            f"Voice raised {loudness_ratio:.1f}x louder than calm parts")
+    # 6. Agitation (rapid MFCC changes = emotional/aggressive speech)
+    if agitation > 2.5:
+        tone_score += flag("HIGH_AGITATION", "HIGH", 10,
+            f"Highly agitated speech (index {agitation:.2f})")
+    elif agitation > 1.5:
+        tone_score += flag("AGITATED_SPEECH", "MEDIUM", 5,
+            f"Agitated speech (index {agitation:.2f})")
 
-    if pitch_var > 40:
-        tone_score += flag("PITCH_UNSTABLE", "MEDIUM", 5,
-            f"Unstable pitch: variance {pitch_var:.1f}Hz (angry/emotional)")
+    # 7. Dynamic range (voice raised vs calm parts within same clip)
+    if loudness_ratio > 6.0:
+        tone_score += flag("VOICE_EXPLOSION", "HIGH", 10,
+            f"Voice raised {loudness_ratio:.0f}x louder than calm parts — sudden anger")
+    elif loudness_ratio > 3.0:
+        tone_score += flag("VOICE_RAISED", "MEDIUM", 5,
+            f"Voice raised {loudness_ratio:.0f}x louder than calm parts")
 
-    # Determine tone label
-    harsh_signals = 0
-    if rms_energy > CONFIG["energy_normal_max"]:
-        harsh_signals += 1
-    if ratio > CONFIG["pitch_high_ratio"] and avg_pitch > 0:
-        harsh_signals += 1
-    if pitch_var > 40:
-        harsh_signals += 1
-    if loud_duration > CONFIG["loud_duration_sec"]:
-        harsh_signals += 1
-    if loudness_ratio > 4.0:
-        harsh_signals += 1
-    if agitation > CONFIG["agitation_threshold"]:
-        harsh_signals += 1
+    # 8. Harsh spectral quality (high spectral centroid = harsh/aggressive tone)
+    if spectral_centroid > 2500 and raw_rms > 0.06:
+        tone_score += flag("HARSH_TONE", "MEDIUM", 5,
+            f"Harsh vocal quality detected (spectral centroid {spectral_centroid:.0f}Hz)")
 
-    if harsh_signals >= 3:
+    # ═══════════════════════════════════════════════════════════
+    #  TONE LABEL — weighted combination of all signals
+    # ═══════════════════════════════════════════════════════════
+    anger_score = 0.0
+    harsh_score = 0.0
+    bribe_score = 0.0
+
+    # Anger signals
+    if raw_rms > 0.15: anger_score += 0.30
+    elif raw_rms > 0.08: anger_score += 0.15
+    if ratio > 1.6 and avg_pitch > 0: anger_score += 0.20
+    elif ratio > 1.3 and avg_pitch > 0: anger_score += 0.10
+    if pitch_var > 50: anger_score += 0.15
+    if shout_duration > 3.0: anger_score += 0.20
+    elif loud_duration > 2.0: anger_score += 0.10
+    if agitation > 2.5: anger_score += 0.15
+    elif agitation > 1.5: anger_score += 0.08
+    if loudness_ratio > 6.0: anger_score += 0.15
+
+    # Harsh signals (moderate aggression)
+    if raw_rms > 0.04: harsh_score += 0.15
+    if ratio > 1.2 and avg_pitch > 0: harsh_score += 0.15
+    if pitch_var > 20: harsh_score += 0.10
+    if loud_duration > 1.0: harsh_score += 0.10
+    if agitation > 1.0: harsh_score += 0.10
+    if spectral_centroid > 2000: harsh_score += 0.10
+    if loudness_ratio > 2.5: harsh_score += 0.10
+
+    # Bribe signals (quiet, low, conspiratorial)
+    if raw_rms < 0.025: bribe_score += 0.25
+    if ratio < 0.85 and avg_pitch > 0: bribe_score += 0.20
+    if pitch_var < 15 and avg_pitch > 0: bribe_score += 0.15
+    if agitation < 0.5: bribe_score += 0.15
+    if loudness_ratio < 1.5: bribe_score += 0.10
+
+    # Determine label from scores
+    if anger_score >= 0.45:
         tone_label = "ANGRY"
-        tone_proba = {"NORMAL": 0.05, "HARSH": 0.15, "ANGRY": 0.75, "BRIBE_TONE": 0.05}
-    elif harsh_signals >= 2:
+        n = round(max(0.02, 1.0 - anger_score - harsh_score * 0.3), 3)
+        tone_proba = {"NORMAL": n, "HARSH": round(harsh_score * 0.5, 3),
+                      "ANGRY": round(min(0.95, anger_score), 3), "BRIBE_TONE": 0.02}
+    elif harsh_score >= 0.35:
         tone_label = "HARSH"
-        tone_proba = {"NORMAL": 0.10, "HARSH": 0.75, "ANGRY": 0.10, "BRIBE_TONE": 0.05}
-    elif harsh_signals >= 1:
-        tone_label = "HARSH"
-        tone_proba = {"NORMAL": 0.40, "HARSH": 0.45, "ANGRY": 0.05, "BRIBE_TONE": 0.10}
-    elif rms_energy < 0.03 and ratio < 0.8 and avg_pitch > 0:
+        n = round(max(0.05, 1.0 - harsh_score - anger_score * 0.3), 3)
+        tone_proba = {"NORMAL": n, "HARSH": round(min(0.90, harsh_score), 3),
+                      "ANGRY": round(anger_score * 0.5, 3), "BRIBE_TONE": 0.03}
+    elif bribe_score >= 0.40:
         tone_label = "BRIBE_TONE"
-        tone_proba = {"NORMAL": 0.20, "HARSH": 0.05, "ANGRY": 0.05, "BRIBE_TONE": 0.70}
+        tone_proba = {"NORMAL": round(max(0.10, 1.0 - bribe_score), 3), "HARSH": 0.03,
+                      "ANGRY": 0.02, "BRIBE_TONE": round(min(0.85, bribe_score), 3)}
     else:
         tone_label = "NORMAL"
-        normal_conf = 1.0
-        if rms_energy > 0:
-            normal_conf -= min(0.3, rms_energy / CONFIG["energy_normal_max"] * 0.15)
-        if ratio > 0:
-            normal_conf -= min(0.2, max(0, ratio - 0.8) * 0.2)
-        normal_conf = max(0.50, min(0.99, normal_conf))
-        harsh_conf  = round((1 - normal_conf) * 0.6, 3)
-        bribe_conf  = round((1 - normal_conf) * 0.3, 3)
-        angry_conf  = round((1 - normal_conf) * 0.1, 3)
-        tone_proba  = {"NORMAL": round(normal_conf, 3), "HARSH": harsh_conf,
-                        "ANGRY": angry_conf, "BRIBE_TONE": bribe_conf}
+        # Even NORMAL gets proportional probabilities
+        total_bad = anger_score + harsh_score + bribe_score
+        n = round(max(0.50, min(0.98, 1.0 - total_bad * 0.6)), 3)
+        tone_proba = {"NORMAL": n,
+                      "HARSH": round(harsh_score * 0.4, 3),
+                      "ANGRY": round(anger_score * 0.3, 3),
+                      "BRIBE_TONE": round(bribe_score * 0.3, 3)}
+
+    print(f"  Tone result: label={tone_label} score={tone_score} "
+          f"anger={anger_score:.2f} harsh={harsh_score:.2f} bribe={bribe_score:.2f}", flush=True)
 
     return tone_label, tone_proba, acoustics, min(tone_score, 50), tone_viols
 

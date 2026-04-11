@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react'
-import { ScoreRing, ViolationCard, ToneBar, Spinner, SeverityBadge, ScoreBar } from '../components/UI'
+import { ScoreRing, ViolationCard, ViolationSummary, ToneBar, Spinner, SeverityBadge, ScoreBar, CATEGORY_STYLE } from '../components/UI'
 import ApiService from '../services/api'
 
 const CARD  = { background:'#ffffff', border:'0.5px solid #D3D1C7', borderRadius:'12px', padding:'20px', marginBottom:'14px' }
@@ -20,11 +20,16 @@ const PROGRESS_STEPS = [
 ]
 
 const KW_GROUPS = [
-  { type:'RISHWAT',    color:'#A32D2D', bg:'#FCEBEB', words:['paisa','paisay','rishwat','deal','chhod do','jaane do','kuch kar lete hain','sulah kar lete hain'] },
-  { type:'DHAMKI',     color:'#7C2D12', bg:'#FFF0E6', words:['arrest kar','jail','thana','maar','nahi chhorra','abhi dekhta hoon'] },
-  { type:'GALI',       color:'#633806', bg:'#FAEEDA', words:['gadha','bewaqoof','chup','andar kar doon','tameez nahi'] },
-  { type:'RUDE',       color:'#3C3489', bg:'#EEEDFE', words:['chup raho','baat mat karo','chalte bano','nikal jao'] },
-  { type:'HARASSMENT', color:'#0C447C', bg:'#E6F1FB', words:['akela pakad loon ga','teri naukri jaye gi','baad mein dekhna'] },
+  { type:'RISHWAT',        icon:'💰', color:'#A32D2D', bg:'#FCEBEB', words:['rishwat','paisa','paisay','deal','chhod do','chai paani','haath garam'] },
+  { type:'DHAMKI',         icon:'⚠',  color:'#7C2D12', bg:'#FFF0E6', words:['arrest kar','jail','thana','maar doon ga','barbaad','FIR','challan'] },
+  { type:'GALI',           icon:'🤬', color:'#633806', bg:'#FAEEDA', words:['gadha','bewaqoof','kamina','harami','kutta','saala','kanjar'] },
+  { type:'RUDE_BEHAVIOR',  icon:'😤', color:'#3C3489', bg:'#EEEDFE', words:['chup raho','bakwas','attitude','nikal jao','auqat','tameez'] },
+  { type:'HARASSMENT',     icon:'🚨', color:'#0C447C', bg:'#E6F1FB', words:['naukri jayegi','dukaan band','badnaam','izzat','tang karunga'] },
+  { type:'ANGRY_TONE',     icon:'🔊', color:'#BA7517', bg:'#FAEEDA', words:['gussa','chillao','cheekh','daant','shor','taiz awaaz'] },
+  { type:'POWER_ABUSE',    icon:'👊', color:'#6B21A8', bg:'#F3E8FF', words:['officer hoon','meri marzi','mera hukum','seal laga','raid'] },
+  { type:'INTIMIDATION',   icon:'😰', color:'#0E4969', bg:'#E6F1FB', words:['dar gaya','anjaam bura','aakhri warning','sabaq sikhaoon'] },
+  { type:'GALAT_CHALLAN',  icon:'📋', color:'#185FA5', bg:'#EBF4FF', words:['galat challan','galat amount','receipt nahi','jhooth likha'] },
+  { type:'UNPROFESSIONAL', icon:'📉', color:'#5F5E5A', bg:'#F8F7F4', words:['mujhe kya','mera kaam nahi','bore','faltu kaam'] },
 ]
 
 export default function Upload() {
@@ -139,26 +144,30 @@ export default function Upload() {
             ))}
           </div>
 
-          {/* Keywords reference */}
+          {/* Keywords reference — all 10 categories */}
           <div style={{ ...CARD, background:'#F8F7F4', border:'0.5px solid #E8E6DF' }}>
-            <span style={LABEL}>Keywords Detected from Voice</span>
+            <span style={LABEL}>588 Keywords · 10 Categories · Auto-Detected</span>
             {KW_GROUPS.map(g => (
               <div key={g.type} style={{ marginBottom:'10px' }}>
-                <div style={{ fontSize:'10px', fontWeight:700, color:g.color,
-                  marginBottom:'4px', letterSpacing:'0.05em', textTransform:'uppercase' }}>
-                  {g.type}
+                <div style={{ display:'flex', alignItems:'center', gap:'6px', marginBottom:'5px' }}>
+                  <span style={{ fontSize:'13px' }}>{g.icon}</span>
+                  <span style={{ fontSize:'10px', fontWeight:700, color:g.color,
+                    letterSpacing:'0.05em', textTransform:'uppercase' }}>
+                    {g.type.replace(/_/g,' ')}
+                  </span>
                 </div>
                 <div style={{ display:'flex', flexWrap:'wrap', gap:'4px' }}>
                   {g.words.map(w => (
                     <span key={w} style={{ background:g.bg, color:g.color,
-                      border:`0.5px solid ${g.color}35`, fontSize:'10px',
+                      border:`0.5px solid ${g.color}25`, fontSize:'10px',
                       padding:'2px 7px', borderRadius:'6px', fontWeight:600 }}>{w}</span>
                   ))}
                 </div>
               </div>
             ))}
-            <div style={{ fontSize:'10px', color:'#B4B2A9', marginTop:'8px', lineHeight:1.5 }}>
-              These words are detected automatically from the audio — no typing needed
+            <div style={{ fontSize:'10px', color:'#B4B2A9', marginTop:'10px', lineHeight:1.5,
+              background:'#fff', padding:'8px 10px', borderRadius:'6px', border:'0.5px solid #E8E6DF' }}>
+              All keywords detected automatically from Urdu/English/Punjabi voice — no manual input
             </div>
           </div>
 
@@ -232,52 +241,93 @@ function ResultPanel({ result: r }) {
   const ac  = r.acoustics || {}
   const ep  = ac.enrolled_pitch_hz || 143
   const sev = r.severity
-  const sevColor = { CRITICAL:'#A32D2D', WARNING:'#633806', NORMAL:'#0F6E56' }[sev]
   const sevBg    = { CRITICAL:'#FCEBEB', WARNING:'#FAEEDA', NORMAL:'#E1F5EE' }[sev]
   const sevBdr   = { CRITICAL:'#F09595', WARNING:'#FAC775', NORMAL:'#9FE1CB' }[sev]
   const CARD  = { background:'#ffffff', border:'0.5px solid #D3D1C7', borderRadius:'12px', padding:'18px', marginBottom:'12px' }
   const LABEL = { fontSize:'10px', color:'#888780', textTransform:'uppercase', letterSpacing:'0.07em', fontWeight:700, marginBottom:'10px', display:'block' }
 
+  const toneScore = r.tone_score || 0
+  const kwScore = r.keyword_score || 0
+  const totalViols = r.violations?.length || 0
+  const transcriptMethod = (r.transcription_method || '').includes('groq') ? 'Groq Whisper Large-v3'
+    : (r.transcription_method || '').includes('whisper') ? 'Whisper AI' : r.transcription_method || 'Auto'
+
   return (
     <div className="fade-in">
 
       {/* Score hero */}
-      <div style={{ background:sevBg, border:`0.5px solid ${sevBdr}`, borderRadius:'14px',
-        padding:'22px', display:'flex', alignItems:'center', gap:'22px', marginBottom:'12px' }}>
-        <ScoreRing score={r.total_score} severity={sev} size={110}/>
+      <div style={{ background:sevBg, border:`1px solid ${sevBdr}`, borderRadius:'16px',
+        padding:'24px', display:'flex', alignItems:'center', gap:'24px', marginBottom:'14px',
+        boxShadow: sev === 'CRITICAL' ? '0 4px 20px rgba(226,75,74,0.2)' : '0 2px 8px rgba(0,0,0,0.04)' }}>
+        <ScoreRing score={r.total_score} severity={sev} size={120}/>
         <div style={{ flex:1 }}>
-          <SeverityBadge severity={sev}/>
-          <div style={{ fontSize:'13px', color:'#5F5E5A', marginTop:'10px', marginBottom:'14px', lineHeight:1.5 }}>
-            {sev==='CRITICAL' && 'Supervisor alerted. Clip saved automatically.'}
-            {sev==='WARNING'  && 'Flagged for supervisor review.'}
-            {sev==='NORMAL'   && 'No violations — normal enforcement interaction.'}
+          <div style={{ display:'flex', alignItems:'center', gap:'10px', marginBottom:'8px' }}>
+            <SeverityBadge severity={sev}/>
+            {totalViols > 0 && (
+              <span style={{ fontSize:'11px', fontWeight:700, color:'#A32D2D',
+                background:'#fff', padding:'3px 10px', borderRadius:'6px',
+                border:'0.5px solid #F09595' }}>
+                {totalViols} violation{totalViols > 1 ? 's' : ''} found
+              </span>
+            )}
           </div>
+          <div style={{ fontSize:'13px', color:'#5F5E5A', marginTop:'6px', marginBottom:'14px', lineHeight:1.6 }}>
+            {sev==='CRITICAL' && 'Immediate action required — supervisor alerted automatically.'}
+            {sev==='WARNING'  && 'Flagged for supervisor review — potential misconduct detected.'}
+            {sev==='NORMAL'   && 'No significant violations — normal enforcement interaction.'}
+          </div>
+          {/* Score breakdown bars */}
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px' }}>
-            <div style={{ background:'rgba(255,255,255,0.7)', borderRadius:'8px', padding:'10px 12px', border:'0.5px solid #E8E6DF' }}>
-              <div style={{ fontSize:'10px', color:'#888780', marginBottom:'3px', textTransform:'uppercase', letterSpacing:'0.06em' }}>Tone Score</div>
-              <div style={{ fontSize:'18px', fontWeight:700, color:'#185FA5' }}>{r.tone_score}/50</div>
+            <div style={{ background:'rgba(255,255,255,0.8)', borderRadius:'10px', padding:'12px 14px', border:'0.5px solid #E8E6DF' }}>
+              <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'6px' }}>
+                <span style={{ fontSize:'10px', color:'#888780', textTransform:'uppercase', letterSpacing:'0.06em', fontWeight:700 }}>
+                  🎙 Tone & Voice
+                </span>
+                <span style={{ fontSize:'16px', fontWeight:700, color:'#185FA5' }}>{toneScore}</span>
+              </div>
+              <div style={{ background:'#E8E6DF', borderRadius:'3px', overflow:'hidden', height:'5px' }}>
+                <div style={{ height:'100%', width:`${Math.min(toneScore * 2, 100)}%`, background:'#185FA5',
+                  borderRadius:'3px', transition:'width 0.7s ease' }}/>
+              </div>
             </div>
-            <div style={{ background:'rgba(255,255,255,0.7)', borderRadius:'8px', padding:'10px 12px', border:'0.5px solid #E8E6DF' }}>
-              <div style={{ fontSize:'10px', color:'#888780', marginBottom:'3px', textTransform:'uppercase', letterSpacing:'0.06em' }}>Keyword Score</div>
-              <div style={{ fontSize:'18px', fontWeight:700, color:'#534AB7' }}>{r.keyword_score}/50</div>
+            <div style={{ background:'rgba(255,255,255,0.8)', borderRadius:'10px', padding:'12px 14px', border:'0.5px solid #E8E6DF' }}>
+              <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'6px' }}>
+                <span style={{ fontSize:'10px', color:'#888780', textTransform:'uppercase', letterSpacing:'0.06em', fontWeight:700 }}>
+                  🔍 Keywords
+                </span>
+                <span style={{ fontSize:'16px', fontWeight:700, color:'#534AB7' }}>{kwScore}</span>
+              </div>
+              <div style={{ background:'#E8E6DF', borderRadius:'3px', overflow:'hidden', height:'5px' }}>
+                <div style={{ height:'100%', width:`${Math.min(kwScore * 2, 100)}%`, background:'#534AB7',
+                  borderRadius:'3px', transition:'width 0.7s ease' }}/>
+              </div>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Auto-detected transcript — shown as evidence, not input */}
+      {/* Violation Category Summary — visual overview */}
+      {totalViols > 0 && (
+        <div style={CARD}>
+          <span style={LABEL}>Violation Categories Detected</span>
+          <ViolationSummary violations={r.violations}/>
+        </div>
+      )}
+
+      {/* Transcript */}
       {r.transcript && (
         <div style={CARD}>
           <div style={{ display:'flex', alignItems:'center', gap:'8px', marginBottom:'10px' }}>
-            <span style={LABEL}>Speech Detected from Audio</span>
+            <span style={LABEL}>🎙 Speech Detected from Audio</span>
             <span style={{ background:'#E1F5EE', color:'#0F6E56', fontSize:'10px',
-              padding:'2px 8px', borderRadius:'5px', fontWeight:700, marginBottom:'10px' }}>
-              Auto-detected via {r.transcription_method === 'whisper' ? 'Whisper AI' : 'Acoustic'}
+              padding:'3px 10px', borderRadius:'6px', fontWeight:700, marginBottom:'10px',
+              border:'0.5px solid #9FE1CB' }}>
+              {transcriptMethod}
             </span>
           </div>
-          <div style={{ fontSize:'13px', color:'#5F5E5A', lineHeight:1.7, fontStyle:'italic',
-            background:'#F8F7F4', borderRadius:'7px', padding:'11px 14px',
-            borderLeft:'3px solid #D3D1C7' }}>
+          <div style={{ fontSize:'14px', color:'#2C2C2A', lineHeight:1.8,
+            background:'#F8F7F4', borderRadius:'8px', padding:'14px 16px',
+            borderLeft:'4px solid #185FA5', fontFamily:'Georgia, serif' }}>
             "{r.transcript}"
           </div>
         </div>
@@ -286,73 +336,79 @@ function ResultPanel({ result: r }) {
       {/* Key metrics */}
       <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:'10px', marginBottom:'12px' }}>
         {[
-          { label:'EO Voice',    value:r.eo_detected?'Detected':'Not found', sub:`max sim ${r.max_similarity}`, color:r.eo_detected?'#1D9E75':'#E24B4A' },
-          { label:'EO Speaking', value:`${r.eo_speaking_sec}s`, sub:`of ${r.total_duration_sec}s total` },
-          { label:'Processed in',value:`${r.processing_time_sec}s`, sub:`${r.speech_segments} speech segs` },
+          { label:'EO Voice', icon:'👤', value:r.eo_detected?'Detected':'Not found', sub:`similarity: ${r.max_similarity}`, color:r.eo_detected?'#1D9E75':'#E24B4A' },
+          { label:'Duration', icon:'⏱', value:`${r.eo_speaking_sec}s`, sub:`of ${r.total_duration_sec}s total` },
+          { label:'Processed', icon:'⚡', value:`${r.processing_time_sec}s`, sub:`${r.speech_segments} speech segments` },
         ].map(m => (
           <div key={m.label} style={{ background:'#F8F7F4', border:'0.5px solid #E8E6DF', borderRadius:'10px', padding:'14px' }}>
-            <div style={{ fontSize:'10px', color:'#888780', textTransform:'uppercase', letterSpacing:'0.07em', fontWeight:700, marginBottom:'8px' }}>{m.label}</div>
+            <div style={{ fontSize:'10px', color:'#888780', textTransform:'uppercase', letterSpacing:'0.07em', fontWeight:700, marginBottom:'8px' }}>
+              {m.icon} {m.label}
+            </div>
             <div style={{ fontSize:'18px', fontWeight:700, color:m.color||'#2C2C2A', marginBottom:'3px' }}>{m.value}</div>
             <div style={{ fontSize:'11px', color:'#888780' }}>{m.sub}</div>
           </div>
         ))}
       </div>
 
-      {/* SVM Tone classifier */}
+      {/* SVM Tone + ANGRY classifier */}
       <div style={CARD}>
-        <span style={LABEL}>SVM Tone Classifier</span>
-        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:'8px' }}>
-          {['NORMAL','HARSH','BRIBE_TONE'].map(l => (
+        <span style={LABEL}>🧠 AI Tone Classifier</span>
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr 1fr', gap:'8px' }}>
+          {['NORMAL','HARSH','ANGRY','BRIBE_TONE'].map(l => (
             <ToneBar key={l} label={l} prob={r.tone_proba?.[l]||0} active={r.tone_label===l}/>
           ))}
         </div>
       </div>
 
-      {/* Acoustics */}
+      {/* Voice Acoustics */}
       {r.eo_detected && ac.avg_pitch_hz > 0 && (
         <div style={CARD}>
-          <span style={LABEL}>EO Voice Acoustics</span>
-          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px' }}>
+          <span style={LABEL}>📊 EO Voice Acoustics</span>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:'8px' }}>
             {[
-              ['Pitch',        `${ac.avg_pitch_hz} Hz`,    ac.avg_pitch_hz > ep*1.55 ? '#E24B4A':'#1D9E75'],
-              ['Baseline',     `${ep} Hz (enrolled)`,      '#888780'],
-              ['Pitch ratio',  `${ac.pitch_ratio}x`,       ac.pitch_ratio>1.55?'#E24B4A':'#1D9E75'],
-              ['Energy',       `${ac.avg_energy}`,         ac.avg_energy>0.28?'#E24B4A':'#1D9E75'],
-              ['Loud duration',`${ac.loud_duration_sec}s`, ac.loud_duration_sec>4?'#BA7517':'#1D9E75'],
-              ['Agitation',    `${ac.agitation}`,          ac.agitation>1.2?'#BA7517':'#1D9E75'],
-            ].map(([lbl,val,col]) => (
-              <div key={lbl} style={{ display:'flex', justifyContent:'space-between', background:'#F8F7F4', borderRadius:'7px', padding:'8px 11px' }}>
-                <span style={{ fontSize:'11px', color:'#888780' }}>{lbl}</span>
-                <span style={{ fontSize:'12px', fontWeight:700, color:col }}>{val}</span>
+              ['Pitch',  `${ac.avg_pitch_hz} Hz`,    ac.avg_pitch_hz > ep*1.55 ? '#E24B4A':'#1D9E75', 'Current pitch'],
+              ['Baseline', `${ep} Hz`,                '#888780', 'Enrolled pitch'],
+              ['Ratio',  `${ac.pitch_ratio}x`,        ac.pitch_ratio>1.55?'#E24B4A':'#1D9E75', 'Pitch vs normal'],
+              ['Energy', `${ac.avg_energy}`,           ac.avg_energy>0.28?'#E24B4A':'#1D9E75', 'Voice loudness'],
+              ['Loud',   `${ac.loud_duration_sec}s`,   ac.loud_duration_sec>4?'#BA7517':'#1D9E75', 'Shouting duration'],
+              ['Agitation', `${ac.agitation}`,         ac.agitation>1.2?'#BA7517':'#1D9E75', 'Voice instability'],
+            ].map(([lbl,val,col,desc]) => (
+              <div key={lbl} style={{ background:'#F8F7F4', borderRadius:'8px', padding:'10px 12px', border:'0.5px solid #E8E6DF' }}>
+                <div style={{ fontSize:'10px', color:'#888780', marginBottom:'4px', textTransform:'uppercase', letterSpacing:'0.05em' }}>{lbl}</div>
+                <div style={{ fontSize:'16px', fontWeight:700, color:col }}>{val}</div>
+                <div style={{ fontSize:'10px', color:'#B4B2A9', marginTop:'2px' }}>{desc}</div>
               </div>
             ))}
           </div>
         </div>
       )}
 
-      {/* Violations */}
+      {/* Violations Detail */}
       <div style={CARD}>
-        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'12px' }}>
-          <span style={LABEL}>Violations Detected from Voice</span>
-          <span style={{ fontSize:'11px', fontWeight:700, padding:'3px 9px', borderRadius:'7px',
-            background:r.violations?.length>0?'#FCEBEB':'#E1F5EE',
-            color:r.violations?.length>0?'#A32D2D':'#0F6E56',
-            border:`0.5px solid ${r.violations?.length>0?'#F09595':'#9FE1CB'}` }}>
-            {r.violations?.length||0} found
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'14px' }}>
+          <span style={LABEL}>🚨 Violations Detected from Voice</span>
+          <span style={{ fontSize:'12px', fontWeight:700, padding:'4px 12px', borderRadius:'8px',
+            background:totalViols > 0 ? '#E24B4A' : '#1D9E75',
+            color:'#fff', boxShadow:'0 1px 3px rgba(0,0,0,0.1)' }}>
+            {totalViols} found
           </span>
         </div>
-        {r.violations?.length > 0 ? (
+        {totalViols > 0 ? (
           r.violations.map((v,i) => <ViolationCard key={i} v={v} index={i}/>)
         ) : (
-          <div style={{ textAlign:'center', padding:'20px', color:'#1D9E75', fontSize:'13px' }}>
-            <div style={{ fontSize:'22px', marginBottom:'6px' }}>✓</div>
-            No violations detected — normal enforcement interaction
+          <div style={{ textAlign:'center', padding:'24px', color:'#1D9E75', fontSize:'14px' }}>
+            <div style={{ fontSize:'28px', marginBottom:'8px' }}>✓</div>
+            <div style={{ fontWeight:600 }}>No violations detected</div>
+            <div style={{ fontSize:'12px', color:'#888780', marginTop:'4px' }}>Normal enforcement interaction</div>
           </div>
         )}
       </div>
 
-      <div style={{ fontSize:'10px', color:'#B4B2A9', textAlign:'right', letterSpacing:'0.04em' }}>
-        {r.officer_name} · {r.timestamp?.slice(0,19).replace('T',' ')} · #{r.incident_id}
+      {/* Footer */}
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center',
+        fontSize:'10px', color:'#B4B2A9', letterSpacing:'0.04em', padding:'4px 0' }}>
+        <span>{r.officer_name} · {r.timestamp?.slice(0,19).replace('T',' ')}</span>
+        <span>ID: {r.incident_id}</span>
       </div>
     </div>
   )

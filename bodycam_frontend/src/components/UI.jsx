@@ -1,18 +1,34 @@
 import React from 'react'
 
 export const SEV = {
-  CRITICAL: { bg:'#FCEBEB', border:'#F09595', text:'#A32D2D' },
-  WARNING:  { bg:'#FAEEDA', border:'#FAC775', text:'#633806' },
-  NORMAL:   { bg:'#E1F5EE', border:'#9FE1CB', text:'#0F6E56' },
+  CRITICAL: { bg:'#FCEBEB', border:'#F09595', text:'#A32D2D', icon:'⚠' },
+  WARNING:  { bg:'#FAEEDA', border:'#FAC775', text:'#633806', icon:'⚡' },
+  NORMAL:   { bg:'#E1F5EE', border:'#9FE1CB', text:'#0F6E56', icon:'✓' },
 }
 
-export function SeverityBadge({ severity }) {
+// Category icons and colors for violation types
+export const CATEGORY_STYLE = {
+  RISHWAT:        { icon:'💰', color:'#A32D2D', bg:'#FCEBEB', label:'Bribery' },
+  DHAMKI:         { icon:'⚠', color:'#7C2D12', bg:'#FFF0E6', label:'Threat' },
+  GALI:           { icon:'🤬', color:'#633806', bg:'#FAEEDA', label:'Abuse' },
+  RUDE_BEHAVIOR:  { icon:'😤', color:'#3C3489', bg:'#EEEDFE', label:'Rude' },
+  HARASSMENT:     { icon:'🚨', color:'#0C447C', bg:'#E6F1FB', label:'Harassment' },
+  GALAT_CHALLAN:  { icon:'📋', color:'#185FA5', bg:'#EBF4FF', label:'Wrong Challan' },
+  ANGRY_TONE:     { icon:'🔊', color:'#BA7517', bg:'#FAEEDA', label:'Angry Tone' },
+  POWER_ABUSE:    { icon:'👊', color:'#6B21A8', bg:'#F3E8FF', label:'Power Abuse' },
+  INTIMIDATION:   { icon:'😰', color:'#0E4969', bg:'#E6F1FB', label:'Intimidation' },
+  UNPROFESSIONAL: { icon:'📉', color:'#5F5E5A', bg:'#F8F7F4', label:'Unprofessional' },
+}
+
+export function SeverityBadge({ severity, showIcon = true }) {
   const s = SEV[severity] || SEV.NORMAL
   return (
     <span style={{ background:s.bg, color:s.text, border:`0.5px solid ${s.border}`,
-      padding:'3px 10px', borderRadius:'20px', fontSize:'11px',
-      fontWeight:600, letterSpacing:'0.04em', textTransform:'uppercase',
-      display:'inline-block' }}>
+      padding:'4px 12px', borderRadius:'20px', fontSize:'11px',
+      fontWeight:700, letterSpacing:'0.04em', textTransform:'uppercase',
+      display:'inline-flex', alignItems:'center', gap:'4px',
+      animation: severity === 'CRITICAL' ? 'pulse 2s infinite' : 'none' }}>
+      {showIcon && <span style={{ fontSize:'12px' }}>{s.icon}</span>}
       {severity}
     </span>
   )
@@ -49,38 +65,51 @@ export function ScoreBar({ score, height = 6 }) {
 
 export function ViolationCard({ v, index = 0 }) {
   const styles = {
-    CRITICAL: { bg:'#FCEBEB', border:'#F09595', left:'#E24B4A', badge:'#F7C1C1', text:'#791F1F' },
-    HIGH:     { bg:'#FAEEDA', border:'#FAC775', left:'#BA7517', badge:'#FAC775', text:'#633806' },
-    MEDIUM:   { bg:'#EBF4FF', border:'#B5D4F4', left:'#185FA5', badge:'#B5D4F4', text:'#0C447C' },
-    LOW:      { bg:'#F8F7F4', border:'#D3D1C7', left:'#888780', badge:'#D3D1C7', text:'#5F5E5A' },
+    CRITICAL: { bg:'#FCEBEB', border:'#F09595', left:'#E24B4A', badge:'#E24B4A', badgeText:'#fff', text:'#791F1F' },
+    HIGH:     { bg:'#FAEEDA', border:'#FAC775', left:'#BA7517', badge:'#BA7517', badgeText:'#fff', text:'#633806' },
+    MEDIUM:   { bg:'#EBF4FF', border:'#B5D4F4', left:'#185FA5', badge:'#185FA5', badgeText:'#fff', text:'#0C447C' },
+    LOW:      { bg:'#F8F7F4', border:'#D3D1C7', left:'#888780', badge:'#888780', badgeText:'#fff', text:'#5F5E5A' },
   }
   const s = styles[v.severity] || styles.LOW
+  const cat = CATEGORY_STYLE[v.type] || {}
+  const catIcon = cat.icon || '●'
   return (
     <div className="fade-in" style={{ background:s.bg, border:`0.5px solid ${s.border}`,
-      borderLeft:`3px solid ${s.left}`, borderRadius:'8px', padding:'12px 14px',
-      marginBottom:'8px', animationDelay:`${index * 0.05}s` }}>
-      <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', gap:'10px' }}>
+      borderLeft:`4px solid ${s.left}`, borderRadius:'10px', padding:'14px 16px',
+      marginBottom:'10px', animationDelay:`${index * 0.06}s`,
+      boxShadow: v.severity === 'CRITICAL' ? '0 2px 8px rgba(226,75,74,0.15)' : 'none' }}>
+      <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', gap:'12px' }}>
         <div style={{ flex:1 }}>
-          <div style={{ display:'flex', alignItems:'center', gap:'8px', marginBottom:'5px' }}>
-            <span style={{ background:s.badge, color:s.text, fontSize:'10px',
-              fontWeight:700, padding:'2px 7px', borderRadius:'6px',
-              textTransform:'uppercase', letterSpacing:'0.04em' }}>{v.severity}</span>
-            <span style={{ fontSize:'13px', fontWeight:600, color:'#2C2C2A' }}>
+          {/* Header: severity + category icon + label */}
+          <div style={{ display:'flex', alignItems:'center', gap:'8px', marginBottom:'6px', flexWrap:'wrap' }}>
+            <span style={{ background:s.badge, color:s.badgeText, fontSize:'9px',
+              fontWeight:700, padding:'3px 8px', borderRadius:'4px',
+              textTransform:'uppercase', letterSpacing:'0.05em' }}>{v.severity}</span>
+            <span style={{ fontSize:'15px' }}>{catIcon}</span>
+            <span style={{ fontSize:'13px', fontWeight:700, color:'#2C2C2A' }}>
               {(v.label || v.type || '').replace(/_/g,' ')}
             </span>
           </div>
-          <div style={{ fontSize:'12px', color:'#5F5E5A', lineHeight:1.5 }}>{v.detail}</div>
+          {/* Description */}
+          <div style={{ fontSize:'12px', color:'#5F5E5A', lineHeight:1.6, marginBottom:'6px' }}>{v.detail}</div>
+          {/* Keywords */}
           {v.keywords_found?.length > 0 && (
-            <div style={{ display:'flex', flexWrap:'wrap', gap:'4px', marginTop:'8px' }}>
+            <div style={{ display:'flex', flexWrap:'wrap', gap:'5px', marginTop:'8px' }}>
               {v.keywords_found.map((kw, i) => (
-                <span key={i} style={{ background:'#F7C1C1', color:'#791F1F',
-                  fontSize:'11px', padding:'2px 8px', borderRadius:'6px',
-                  fontWeight:600, border:'0.5px solid #F09595' }}>{kw}</span>
+                <span key={i} style={{ background:cat.bg || '#F7C1C1', color:cat.color || '#791F1F',
+                  fontSize:'11px', padding:'3px 9px', borderRadius:'6px',
+                  fontWeight:600, border:`0.5px solid ${(cat.color || '#F09595')}30`,
+                  letterSpacing:'0.02em' }}>
+                  {kw}
+                </span>
               ))}
             </div>
           )}
         </div>
-        <div style={{ fontSize:'14px', fontWeight:700, color:s.text, whiteSpace:'nowrap', marginTop:'2px' }}>
+        {/* Score badge */}
+        <div style={{ background:s.left, color:'#fff', fontSize:'13px', fontWeight:700,
+          padding:'6px 10px', borderRadius:'8px', whiteSpace:'nowrap',
+          minWidth:'44px', textAlign:'center', boxShadow:'0 1px 3px rgba(0,0,0,0.1)' }}>
           +{v.score}
         </div>
       </div>
@@ -100,9 +129,9 @@ export function MetricTile({ label, value, sub, color = '#2C2C2A' }) {
 }
 
 export function ToneBar({ label, prob, active }) {
-  const colors = { NORMAL:'#1D9E75', HARSH:'#E24B4A', BRIBE_TONE:'#BA7517' }
+  const colors = { NORMAL:'#1D9E75', HARSH:'#E24B4A', ANGRY:'#DC2626', BRIBE_TONE:'#BA7517' }
   const color  = colors[label] || '#888780'
-  const bgs    = { NORMAL:'#E1F5EE', HARSH:'#FCEBEB', BRIBE_TONE:'#FAEEDA' }
+  const bgs    = { NORMAL:'#E1F5EE', HARSH:'#FCEBEB', ANGRY:'#FEE2E2', BRIBE_TONE:'#FAEEDA' }
   const bg     = active ? bgs[label] || '#F8F7F4' : '#F8F7F4'
   return (
     <div style={{ background:bg, border:`0.5px solid ${active ? color + '60' : '#D3D1C7'}`,
@@ -135,18 +164,53 @@ export function Spinner({ size = 18, color = '#185FA5' }) {
 export function ScoreDisplay({ score, severity }) {
   const s = SEV[severity] || SEV.NORMAL
   return (
-    <div style={{ background:s.bg, border:`0.5px solid ${s.border}`,
-      borderRadius:'12px', padding:'20px', display:'flex', alignItems:'center', gap:'20px' }}>
-      <ScoreRing score={score} severity={severity} size={100}/>
+    <div style={{ background:s.bg, border:`1px solid ${s.border}`,
+      borderRadius:'14px', padding:'22px', display:'flex', alignItems:'center', gap:'22px',
+      boxShadow: severity === 'CRITICAL' ? '0 4px 16px rgba(226,75,74,0.2)' : '0 2px 8px rgba(0,0,0,0.04)',
+      animation: severity === 'CRITICAL' ? 'pulse 3s infinite' : 'none' }}>
+      <ScoreRing score={score} severity={severity} size={110}/>
       <div style={{ flex:1 }}>
         <SeverityBadge severity={severity}/>
-        <div style={{ fontSize:'13px', color:'#5F5E5A', marginTop:'8px', marginBottom:'12px', lineHeight:1.5 }}>
-          {severity === 'CRITICAL' && 'Supervisor alerted. Clip saved automatically.'}
-          {severity === 'WARNING'  && 'Flagged for supervisor review.'}
-          {severity === 'NORMAL'   && 'No violations — normal enforcement interaction.'}
+        <div style={{ fontSize:'13px', color:'#5F5E5A', marginTop:'10px', marginBottom:'14px', lineHeight:1.6 }}>
+          {severity === 'CRITICAL' && 'Immediate action required — supervisor alerted automatically.'}
+          {severity === 'WARNING'  && 'Flagged for supervisor review — potential misconduct detected.'}
+          {severity === 'NORMAL'   && 'No violations detected — normal enforcement interaction.'}
         </div>
         <ScoreBar score={score}/>
       </div>
+    </div>
+  )
+}
+
+export function ViolationSummary({ violations = [] }) {
+  if (!violations.length) return null
+  const cats = {}
+  violations.forEach(v => {
+    const key = v.type || v.label || 'OTHER'
+    if (!cats[key]) cats[key] = { count:0, score:0, severity:v.severity, keywords:[] }
+    cats[key].count++
+    cats[key].score += v.score || 0
+    if (v.keywords_found) cats[key].keywords.push(...v.keywords_found)
+  })
+  return (
+    <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(140px, 1fr))', gap:'8px' }}>
+      {Object.entries(cats).map(([key, val]) => {
+        const cat = CATEGORY_STYLE[key] || { icon:'●', color:'#5F5E5A', bg:'#F8F7F4' }
+        return (
+          <div key={key} style={{ background:cat.bg, border:`0.5px solid ${cat.color}25`,
+            borderRadius:'10px', padding:'12px', textAlign:'center' }}>
+            <div style={{ fontSize:'20px', marginBottom:'4px' }}>{cat.icon}</div>
+            <div style={{ fontSize:'10px', fontWeight:700, color:cat.color,
+              textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:'4px' }}>
+              {cat.label || key.replace(/_/g,' ')}
+            </div>
+            <div style={{ fontSize:'18px', fontWeight:700, color:cat.color }}>+{val.score}</div>
+            <div style={{ fontSize:'10px', color:'#888780', marginTop:'2px' }}>
+              {val.keywords.length} keyword{val.keywords.length !== 1 ? 's' : ''}
+            </div>
+          </div>
+        )
+      })}
     </div>
   )
 }
