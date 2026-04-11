@@ -1,34 +1,42 @@
 import React from 'react'
 
+// ── Dark theme severity colors ──
 export const SEV = {
-  CRITICAL: { bg:'#FCEBEB', border:'#F09595', text:'#A32D2D', icon:'⚠' },
-  WARNING:  { bg:'#FAEEDA', border:'#FAC775', text:'#633806', icon:'⚡' },
-  NORMAL:   { bg:'#E1F5EE', border:'#9FE1CB', text:'#0F6E56', icon:'✓' },
+  CRITICAL: { bg:'rgba(239,68,68,0.12)', border:'rgba(239,68,68,0.3)', text:'#EF4444', glow:'rgba(239,68,68,0.2)', icon:'⚠' },
+  WARNING:  { bg:'rgba(245,158,11,0.12)', border:'rgba(245,158,11,0.3)', text:'#F59E0B', glow:'rgba(245,158,11,0.15)', icon:'⚡' },
+  NORMAL:   { bg:'rgba(16,185,129,0.12)', border:'rgba(16,185,129,0.3)', text:'#10B981', glow:'rgba(16,185,129,0.15)', icon:'✓' },
 }
 
-// Category icons and colors for violation types
 export const CATEGORY_STYLE = {
-  RISHWAT:        { icon:'💰', color:'#A32D2D', bg:'#FCEBEB', label:'Bribery' },
-  DHAMKI:         { icon:'⚠', color:'#7C2D12', bg:'#FFF0E6', label:'Threat' },
-  GALI:           { icon:'🤬', color:'#633806', bg:'#FAEEDA', label:'Abuse' },
-  RUDE_BEHAVIOR:  { icon:'😤', color:'#3C3489', bg:'#EEEDFE', label:'Rude' },
-  HARASSMENT:     { icon:'🚨', color:'#0C447C', bg:'#E6F1FB', label:'Harassment' },
-  GALAT_CHALLAN:  { icon:'📋', color:'#185FA5', bg:'#EBF4FF', label:'Wrong Challan' },
-  ANGRY_TONE:     { icon:'🔊', color:'#BA7517', bg:'#FAEEDA', label:'Angry Tone' },
-  POWER_ABUSE:    { icon:'👊', color:'#6B21A8', bg:'#F3E8FF', label:'Power Abuse' },
-  INTIMIDATION:   { icon:'😰', color:'#0E4969', bg:'#E6F1FB', label:'Intimidation' },
-  UNPROFESSIONAL: { icon:'📉', color:'#5F5E5A', bg:'#F8F7F4', label:'Unprofessional' },
+  RISHWAT:        { icon:'💰', color:'#EF4444', bg:'rgba(239,68,68,0.1)',  label:'Bribery' },
+  DHAMKI:         { icon:'⚠',  color:'#F97316', bg:'rgba(249,115,22,0.1)', label:'Threat' },
+  GALI:           { icon:'🤬', color:'#EAB308', bg:'rgba(234,179,8,0.1)',  label:'Abuse' },
+  RUDE_BEHAVIOR:  { icon:'😤', color:'#8B5CF6', bg:'rgba(139,92,246,0.1)', label:'Rude' },
+  HARASSMENT:     { icon:'🚨', color:'#3B82F6', bg:'rgba(59,130,246,0.1)', label:'Harassment' },
+  GALAT_CHALLAN:  { icon:'📋', color:'#06B6D4', bg:'rgba(6,182,212,0.1)',  label:'Wrong Challan' },
+  ANGRY_TONE:     { icon:'🔊', color:'#F59E0B', bg:'rgba(245,158,11,0.1)', label:'Angry Tone' },
+  POWER_ABUSE:    { icon:'👊', color:'#A855F7', bg:'rgba(168,85,247,0.1)', label:'Power Abuse' },
+  INTIMIDATION:   { icon:'😰', color:'#6366F1', bg:'rgba(99,102,241,0.1)', label:'Intimidation' },
+  UNPROFESSIONAL: { icon:'📉', color:'#64748B', bg:'rgba(100,116,139,0.1)',label:'Unprofessional' },
+}
+
+// ── Reusable card styles ──
+export const C = {
+  card:    { background:'#111827', border:'1px solid #1F2937', borderRadius:'16px', padding:'22px' },
+  card_sm: { background:'#111827', border:'1px solid #1F2937', borderRadius:'12px', padding:'16px' },
+  surface: { background:'#1A1F2E', border:'1px solid #2D3348', borderRadius:'10px', padding:'14px' },
 }
 
 export function SeverityBadge({ severity, showIcon = true }) {
   const s = SEV[severity] || SEV.NORMAL
   return (
-    <span style={{ background:s.bg, color:s.text, border:`0.5px solid ${s.border}`,
-      padding:'4px 12px', borderRadius:'20px', fontSize:'11px',
-      fontWeight:700, letterSpacing:'0.04em', textTransform:'uppercase',
-      display:'inline-flex', alignItems:'center', gap:'4px',
-      animation: severity === 'CRITICAL' ? 'pulse 2s infinite' : 'none' }}>
-      {showIcon && <span style={{ fontSize:'12px' }}>{s.icon}</span>}
+    <span style={{ background:s.bg, color:s.text, border:`1px solid ${s.border}`,
+      padding:'5px 14px', borderRadius:'20px', fontSize:'11px',
+      fontWeight:700, letterSpacing:'0.06em', textTransform:'uppercase',
+      display:'inline-flex', alignItems:'center', gap:'5px',
+      animation: severity === 'CRITICAL' ? 'pulse 2s infinite' : 'none',
+      boxShadow: `0 0 12px ${s.glow}` }}>
+      {showIcon && <span style={{ fontSize:'11px' }}>{s.icon}</span>}
       {severity}
     </span>
   )
@@ -36,80 +44,84 @@ export function SeverityBadge({ severity, showIcon = true }) {
 
 export function ScoreRing({ score, severity, size = 100 }) {
   const s    = SEV[severity] || SEV.NORMAL
-  const r    = (size - 10) / 2
+  const r    = (size - 12) / 2
   const circ = 2 * Math.PI * r
   const off  = circ - (score / 100) * circ
   return (
     <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ flexShrink:0 }}>
-      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke="#E8E6DF" strokeWidth="8"/>
+      <defs>
+        <filter id={`glow-${severity}`}>
+          <feGaussianBlur stdDeviation="3" result="blur"/>
+          <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+      </defs>
+      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke="#1F2937" strokeWidth="8"/>
       <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={s.text} strokeWidth="8"
         strokeDasharray={circ} strokeDashoffset={off} strokeLinecap="round"
         transform={`rotate(-90 ${size/2} ${size/2})`}
-        style={{ transition:'stroke-dashoffset 0.8s cubic-bezier(0.4,0,0.2,1)' }}/>
+        filter={`url(#glow-${severity})`}
+        style={{ transition:'stroke-dashoffset 1s cubic-bezier(0.4,0,0.2,1)' }}/>
       <text x={size/2} y={size/2-4} textAnchor="middle"
-        fill={s.text} fontSize={size > 80 ? 22 : 16} fontWeight="700">{score}</text>
-      <text x={size/2} y={size/2+14} textAnchor="middle" fill="#888780" fontSize="10">/100</text>
+        fill={s.text} fontSize={size > 80 ? 26 : 18} fontWeight="800">{score}</text>
+      <text x={size/2} y={size/2+16} textAnchor="middle" fill="#64748B" fontSize="10" fontWeight="600">/100</text>
     </svg>
   )
 }
 
 export function ScoreBar({ score, height = 6 }) {
-  const color = score >= 70 ? '#E24B4A' : score >= 40 ? '#BA7517' : '#1D9E75'
+  const color = score >= 70 ? '#EF4444' : score >= 40 ? '#F59E0B' : '#10B981'
   return (
-    <div style={{ background:'#E8E6DF', borderRadius:'4px', overflow:'hidden', height }}>
+    <div style={{ background:'#1F2937', borderRadius:'4px', overflow:'hidden', height }}>
       <div style={{ height:'100%', width:`${Math.min(score,100)}%`, background:color,
-        borderRadius:'4px', transition:'width 0.7s cubic-bezier(0.4,0,0.2,1)' }}/>
+        borderRadius:'4px', transition:'width 0.8s cubic-bezier(0.4,0,0.2,1)',
+        boxShadow:`0 0 8px ${color}40` }}/>
     </div>
   )
 }
 
 export function ViolationCard({ v, index = 0 }) {
   const styles = {
-    CRITICAL: { bg:'#FCEBEB', border:'#F09595', left:'#E24B4A', badge:'#E24B4A', badgeText:'#fff', text:'#791F1F' },
-    HIGH:     { bg:'#FAEEDA', border:'#FAC775', left:'#BA7517', badge:'#BA7517', badgeText:'#fff', text:'#633806' },
-    MEDIUM:   { bg:'#EBF4FF', border:'#B5D4F4', left:'#185FA5', badge:'#185FA5', badgeText:'#fff', text:'#0C447C' },
-    LOW:      { bg:'#F8F7F4', border:'#D3D1C7', left:'#888780', badge:'#888780', badgeText:'#fff', text:'#5F5E5A' },
+    CRITICAL: { bg:'rgba(239,68,68,0.08)', border:'rgba(239,68,68,0.25)', left:'#EF4444', badge:'#EF4444', text:'#FCA5A5' },
+    HIGH:     { bg:'rgba(245,158,11,0.08)', border:'rgba(245,158,11,0.25)', left:'#F59E0B', badge:'#F59E0B', text:'#FCD34D' },
+    MEDIUM:   { bg:'rgba(59,130,246,0.08)', border:'rgba(59,130,246,0.25)', left:'#3B82F6', badge:'#3B82F6', text:'#93C5FD' },
+    LOW:      { bg:'rgba(100,116,139,0.08)', border:'rgba(100,116,139,0.25)', left:'#64748B', badge:'#64748B', text:'#94A3B8' },
   }
   const s = styles[v.severity] || styles.LOW
   const cat = CATEGORY_STYLE[v.type] || {}
-  const catIcon = cat.icon || '●'
   return (
-    <div className="fade-in" style={{ background:s.bg, border:`0.5px solid ${s.border}`,
-      borderLeft:`4px solid ${s.left}`, borderRadius:'10px', padding:'14px 16px',
+    <div className="fade-in" style={{ background:s.bg, border:`1px solid ${s.border}`,
+      borderLeft:`4px solid ${s.left}`, borderRadius:'12px', padding:'16px 18px',
       marginBottom:'10px', animationDelay:`${index * 0.06}s`,
-      boxShadow: v.severity === 'CRITICAL' ? '0 2px 8px rgba(226,75,74,0.15)' : 'none' }}>
+      boxShadow: v.severity === 'CRITICAL' ? `0 0 20px rgba(239,68,68,0.1)` : 'none' }}>
       <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', gap:'12px' }}>
         <div style={{ flex:1 }}>
-          {/* Header: severity + category icon + label */}
-          <div style={{ display:'flex', alignItems:'center', gap:'8px', marginBottom:'6px', flexWrap:'wrap' }}>
-            <span style={{ background:s.badge, color:s.badgeText, fontSize:'9px',
+          <div style={{ display:'flex', alignItems:'center', gap:'8px', marginBottom:'8px', flexWrap:'wrap' }}>
+            <span style={{ background:s.badge, color:'#fff', fontSize:'9px',
               fontWeight:700, padding:'3px 8px', borderRadius:'4px',
-              textTransform:'uppercase', letterSpacing:'0.05em' }}>{v.severity}</span>
-            <span style={{ fontSize:'15px' }}>{catIcon}</span>
-            <span style={{ fontSize:'13px', fontWeight:700, color:'#2C2C2A' }}>
+              textTransform:'uppercase', letterSpacing:'0.06em' }}>{v.severity}</span>
+            <span style={{ fontSize:'16px' }}>{cat.icon || '●'}</span>
+            <span style={{ fontSize:'13px', fontWeight:700, color:'#F1F5F9' }}>
               {(v.label || v.type || '').replace(/_/g,' ')}
             </span>
           </div>
-          {/* Description */}
-          <div style={{ fontSize:'12px', color:'#5F5E5A', lineHeight:1.6, marginBottom:'6px' }}>{v.detail}</div>
-          {/* Keywords */}
+          <div style={{ fontSize:'12px', color:'#94A3B8', lineHeight:1.6 }}>{v.detail}</div>
           {v.keywords_found?.length > 0 && (
-            <div style={{ display:'flex', flexWrap:'wrap', gap:'5px', marginTop:'8px' }}>
+            <div style={{ display:'flex', flexWrap:'wrap', gap:'5px', marginTop:'10px' }}>
               {v.keywords_found.map((kw, i) => (
-                <span key={i} style={{ background:cat.bg || '#F7C1C1', color:cat.color || '#791F1F',
-                  fontSize:'11px', padding:'3px 9px', borderRadius:'6px',
-                  fontWeight:600, border:`0.5px solid ${(cat.color || '#F09595')}30`,
-                  letterSpacing:'0.02em' }}>
+                <span key={i} style={{ background:cat.bg || 'rgba(239,68,68,0.15)',
+                  color:cat.color || '#FCA5A5',
+                  fontSize:'11px', padding:'4px 10px', borderRadius:'6px',
+                  fontWeight:600, border:`1px solid ${(cat.color || '#EF4444')}25` }}>
                   {kw}
                 </span>
               ))}
             </div>
           )}
         </div>
-        {/* Score badge */}
-        <div style={{ background:s.left, color:'#fff', fontSize:'13px', fontWeight:700,
-          padding:'6px 10px', borderRadius:'8px', whiteSpace:'nowrap',
-          minWidth:'44px', textAlign:'center', boxShadow:'0 1px 3px rgba(0,0,0,0.1)' }}>
+        <div style={{ background:`linear-gradient(135deg, ${s.left}, ${s.left}CC)`, color:'#fff',
+          fontSize:'14px', fontWeight:800, padding:'8px 12px', borderRadius:'10px',
+          whiteSpace:'nowrap', minWidth:'48px', textAlign:'center',
+          boxShadow:`0 4px 12px ${s.left}40` }}>
           +{v.score}
         </div>
       </div>
@@ -117,46 +129,50 @@ export function ViolationCard({ v, index = 0 }) {
   )
 }
 
-export function MetricTile({ label, value, sub, color = '#2C2C2A' }) {
+export function MetricTile({ label, value, sub, color = '#E2E8F0', icon }) {
   return (
-    <div style={{ background:'#F8F7F4', border:'0.5px solid #E8E6DF', borderRadius:'10px', padding:'16px' }}>
-      <div style={{ fontSize:'10px', color:'#888780', textTransform:'uppercase',
-        letterSpacing:'0.07em', fontWeight:700, marginBottom:'8px' }}>{label}</div>
-      <div style={{ fontSize:'26px', fontWeight:700, color, marginBottom:'4px' }}>{value}</div>
-      {sub && <div style={{ fontSize:'11px', color:'#888780' }}>{sub}</div>}
+    <div style={{ background:'#111827', border:'1px solid #1F2937', borderRadius:'14px', padding:'18px' }}>
+      <div style={{ display:'flex', alignItems:'center', gap:'6px', marginBottom:'10px' }}>
+        {icon && <span style={{ fontSize:'14px' }}>{icon}</span>}
+        <span style={{ fontSize:'10px', color:'#64748B', textTransform:'uppercase',
+          letterSpacing:'0.08em', fontWeight:700 }}>{label}</span>
+      </div>
+      <div style={{ fontSize:'28px', fontWeight:800, color, marginBottom:'4px' }}>{value}</div>
+      {sub && <div style={{ fontSize:'11px', color:'#64748B' }}>{sub}</div>}
     </div>
   )
 }
 
 export function ToneBar({ label, prob, active }) {
-  const colors = { NORMAL:'#1D9E75', HARSH:'#E24B4A', ANGRY:'#DC2626', BRIBE_TONE:'#BA7517' }
-  const color  = colors[label] || '#888780'
-  const bgs    = { NORMAL:'#E1F5EE', HARSH:'#FCEBEB', ANGRY:'#FEE2E2', BRIBE_TONE:'#FAEEDA' }
-  const bg     = active ? bgs[label] || '#F8F7F4' : '#F8F7F4'
+  const colors = { NORMAL:'#10B981', HARSH:'#EF4444', ANGRY:'#DC2626', BRIBE_TONE:'#F59E0B' }
+  const color  = colors[label] || '#64748B'
   return (
-    <div style={{ background:bg, border:`0.5px solid ${active ? color + '60' : '#D3D1C7'}`,
-      borderRadius:'8px', padding:'10px 12px' }}>
-      <div style={{ display:'flex', justifyContent:'space-between', marginBottom:'6px' }}>
-        <span style={{ fontSize:'11px', fontWeight:600,
-          color:active ? color : '#888780', textTransform:'uppercase', letterSpacing:'0.04em' }}>
+    <div style={{ background: active ? `${color}15` : '#111827',
+      border:`1px solid ${active ? `${color}40` : '#1F2937'}`,
+      borderRadius:'10px', padding:'12px 14px',
+      boxShadow: active ? `0 0 12px ${color}20` : 'none' }}>
+      <div style={{ display:'flex', justifyContent:'space-between', marginBottom:'8px' }}>
+        <span style={{ fontSize:'11px', fontWeight:700,
+          color:active ? color : '#64748B', textTransform:'uppercase', letterSpacing:'0.05em' }}>
           {label.replace(/_/g,' ')}
         </span>
-        <span style={{ fontSize:'14px', fontWeight:700, color:active ? color : '#B4B2A9' }}>
+        <span style={{ fontSize:'15px', fontWeight:800, color:active ? color : '#475569' }}>
           {Math.round(prob * 100)}%
         </span>
       </div>
-      <div style={{ background:'#E8E6DF', borderRadius:'3px', overflow:'hidden', height:'4px' }}>
+      <div style={{ background:'#1F2937', borderRadius:'4px', overflow:'hidden', height:'5px' }}>
         <div style={{ height:'100%', width:`${prob * 100}%`, background:color,
-          borderRadius:'3px', transition:'width 0.6s ease' }}/>
+          borderRadius:'4px', transition:'width 0.7s ease',
+          boxShadow: active ? `0 0 8px ${color}60` : 'none' }}/>
       </div>
     </div>
   )
 }
 
-export function Spinner({ size = 18, color = '#185FA5' }) {
+export function Spinner({ size = 18, color = '#3B82F6' }) {
   return (
     <div style={{ width:size, height:size, borderRadius:'50%',
-      border:`2px solid #D3D1C7`, borderTopColor:color,
+      border:`2px solid #1F2937`, borderTopColor:color,
       animation:'spin 0.7s linear infinite', flexShrink:0 }}/>
   )
 }
@@ -165,13 +181,13 @@ export function ScoreDisplay({ score, severity }) {
   const s = SEV[severity] || SEV.NORMAL
   return (
     <div style={{ background:s.bg, border:`1px solid ${s.border}`,
-      borderRadius:'14px', padding:'22px', display:'flex', alignItems:'center', gap:'22px',
-      boxShadow: severity === 'CRITICAL' ? '0 4px 16px rgba(226,75,74,0.2)' : '0 2px 8px rgba(0,0,0,0.04)',
-      animation: severity === 'CRITICAL' ? 'pulse 3s infinite' : 'none' }}>
+      borderRadius:'16px', padding:'24px', display:'flex', alignItems:'center', gap:'24px',
+      boxShadow: `0 4px 24px ${s.glow}`,
+      animation: severity === 'CRITICAL' ? 'criticalPulse 3s infinite' : 'none' }}>
       <ScoreRing score={score} severity={severity} size={110}/>
       <div style={{ flex:1 }}>
         <SeverityBadge severity={severity}/>
-        <div style={{ fontSize:'13px', color:'#5F5E5A', marginTop:'10px', marginBottom:'14px', lineHeight:1.6 }}>
+        <div style={{ fontSize:'13px', color:'#94A3B8', marginTop:'10px', marginBottom:'14px', lineHeight:1.6 }}>
           {severity === 'CRITICAL' && 'Immediate action required — supervisor alerted automatically.'}
           {severity === 'WARNING'  && 'Flagged for supervisor review — potential misconduct detected.'}
           {severity === 'NORMAL'   && 'No violations detected — normal enforcement interaction.'}
@@ -193,19 +209,20 @@ export function ViolationSummary({ violations = [] }) {
     if (v.keywords_found) cats[key].keywords.push(...v.keywords_found)
   })
   return (
-    <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(140px, 1fr))', gap:'8px' }}>
+    <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(130px, 1fr))', gap:'10px' }}>
       {Object.entries(cats).map(([key, val]) => {
-        const cat = CATEGORY_STYLE[key] || { icon:'●', color:'#5F5E5A', bg:'#F8F7F4' }
+        const cat = CATEGORY_STYLE[key] || { icon:'●', color:'#64748B', bg:'rgba(100,116,139,0.1)' }
         return (
-          <div key={key} style={{ background:cat.bg, border:`0.5px solid ${cat.color}25`,
-            borderRadius:'10px', padding:'12px', textAlign:'center' }}>
-            <div style={{ fontSize:'20px', marginBottom:'4px' }}>{cat.icon}</div>
-            <div style={{ fontSize:'10px', fontWeight:700, color:cat.color,
-              textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:'4px' }}>
+          <div key={key} style={{ background:cat.bg, border:`1px solid ${cat.color}25`,
+            borderRadius:'12px', padding:'14px', textAlign:'center',
+            boxShadow:`0 0 12px ${cat.color}10` }}>
+            <div style={{ fontSize:'22px', marginBottom:'6px' }}>{cat.icon}</div>
+            <div style={{ fontSize:'9px', fontWeight:700, color:cat.color,
+              textTransform:'uppercase', letterSpacing:'0.06em', marginBottom:'6px' }}>
               {cat.label || key.replace(/_/g,' ')}
             </div>
-            <div style={{ fontSize:'18px', fontWeight:700, color:cat.color }}>+{val.score}</div>
-            <div style={{ fontSize:'10px', color:'#888780', marginTop:'2px' }}>
+            <div style={{ fontSize:'20px', fontWeight:800, color:cat.color }}>+{val.score}</div>
+            <div style={{ fontSize:'10px', color:'#64748B', marginTop:'3px' }}>
               {val.keywords.length} keyword{val.keywords.length !== 1 ? 's' : ''}
             </div>
           </div>
@@ -218,8 +235,3 @@ export function ViolationSummary({ violations = [] }) {
 export const MetricCard    = MetricTile
 export const ViolationItem = ViolationCard
 export const ToneCard      = ToneBar
-export const C = {
-  card:    { background:'#ffffff', border:'0.5px solid #D3D1C7', borderRadius:'12px', padding:'20px' },
-  card_sm: { background:'#ffffff', border:'0.5px solid #D3D1C7', borderRadius:'10px', padding:'14px' },
-  surface: { background:'#F8F7F4', border:'0.5px solid #E8E6DF', borderRadius:'8px',  padding:'12px' },
-}

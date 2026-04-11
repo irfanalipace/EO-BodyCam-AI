@@ -196,13 +196,55 @@ def normalize_urdu_text(text):
     return text
 
 
-def _groq_transcribe(audio_path):
-    """Transcribe via Groq API — uses whisper-large-v3 (best Urdu accuracy).
+def _detect_hallucination(text):
+    """Detect Whisper hallucination — repeating phrases."""
+    if not text or len(text) < 10:
+        return True
+    words = text.split()
+    if len(words) < 3:
+        return False
+    for i in range(len(words) - 5):
+        phrase = words[i] + " " + words[i+1]
+        count = sum(1 for j in range(i, len(words) - 1) if words[j] + " " + words[j+1] == phrase)
+        if count >= 3:
+            return True
+    from collections import Counter
+    counts = Counter(words)
+    for word, cnt in counts.most_common(3):
+        if cnt >= 4 and cnt / len(words) > 0.3 and len(word) > 1:
+            return True
+    return False
 
-    Returns tuple: (urdu_text, english_text)
-    - urdu_text: Urdu script transcription
-    - english_text: English/Roman translation of same audio
-    """
+
+def _clean_hallucination(text):
+    """Remove repeated phrases, keep first occurrence."""
+    if not text:
+        return text
+    words = text.split()
+    if len(words) < 6:
+        return text
+    seen = {}
+    for i in range(len(words) - 1):
+        bigram = words[i] + " " + words[i+1]
+        if bigram in seen and i - seen[bigram] < 5:
+            return " ".join(words[:seen[bigram] + 2])
+        seen[bigram] = i
+    return text
+
+
+def _google_transcribe_chunk(audio_data, language):
+    """Transcribe a single chunk via Google Speech."""
+    try:
+        text = RECOGNIZER.recognize_google(audio_data, language=language)
+        if text and text.strip():
+            return text.strip()
+    except (sr_lib.UnknownValueError, sr_lib.RequestError):
+        pass
+    return ""
+
+
+def _groq_transcribe(audio_path):
+    """Transcribe via Groq API with hallucination protection."""
     import requests
     groq_key = os.environ.get("GROQ_API_KEY", "")
     if not groq_key:
@@ -212,14 +254,13 @@ def _groq_transcribe(audio_path):
     urdu_text = ""
     english_text = ""
 
-    # Urdu context prompt — helps Whisper understand Pakistani Urdu vocabulary
     urdu_prompt = (
-        "بکواس بند کرو، چپ رہو، تمیز سے بات کرو، رشوت، پیسے دے دو، "
-        "چالان، گرفتار، جیل، بدتمیز، کمینا، حرامی، گدھا، پاگل، "
-        "ریٹ لسٹ، اسٹیشن، دکان، نوکری، ایٹیٹیوڈ"
+        "یار میں شالیمار اسٹیشن سے آیا ہوں۔ ریٹ لسٹ لگائی ہے۔ "
+        "بکواس بند کرو، چپ رہو، تمیز سے بات کرو۔ "
+        "پیسے دے دو، چالان، گرفتار، رشوت۔"
     )
 
-    # 1. Urdu transcription (Urdu script output)
+    # 1. Urdu transcription
     try:
         with open(audio_path, "rb") as f:
             resp = requests.post(
@@ -227,22 +268,27 @@ def _groq_transcribe(audio_path):
                 headers=headers,
                 files={"file": ("audio.wav", f, "audio/wav")},
                 data={
-                    "model": "whisper-large-v3",
+                    "model": "whisper-large-v3-turbo",
                     "language": "ur",
                     "response_format": "text",
                     "prompt": urdu_prompt,
+                    "temperature": "0.0",
                 },
                 timeout=30,
             )
         if resp.status_code == 200 and resp.text.strip():
-            urdu_text = resp.text.strip()
+            raw = resp.text.strip()
+            if _detect_hallucination(raw):
+                print(f"  [groq-ur] hallucination detected, cleaning", flush=True)
+                raw = _clean_hallucination(raw)
+            urdu_text = raw
             print(f"  [groq-ur] {urdu_text[:200]}", flush=True)
         else:
             print(f"  Groq Urdu error {resp.status_code}: {resp.text[:100]}", flush=True)
     except Exception as e:
         print(f"  Groq Urdu error: {e}", flush=True)
 
-    # 2. English translation (Roman/English output — catches Roman Urdu keywords)
+    # 2. English translation
     try:
         with open(audio_path, "rb") as f:
             resp = requests.post(
@@ -250,14 +296,17 @@ def _groq_transcribe(audio_path):
                 headers=headers,
                 files={"file": ("audio.wav", f, "audio/wav")},
                 data={
-                    "model": "whisper-large-v3",
+                    "model": "whisper-large-v3-turbo",
                     "response_format": "text",
+                    "temperature": "0.0",
                 },
                 timeout=30,
             )
         if resp.status_code == 200 and resp.text.strip():
-            english_text = resp.text.strip()
-            print(f"  [groq-en] {english_text[:200]}", flush=True)
+            en = resp.text.strip()
+            if not _detect_hallucination(en):
+                english_text = en
+                print(f"  [groq-en] {english_text[:200]}", flush=True)
         else:
             print(f"  Groq English error {resp.status_code}: {resp.text[:100]}", flush=True)
     except Exception as e:
@@ -267,121 +316,147 @@ def _groq_transcribe(audio_path):
 
 
 def auto_transcribe(audio, sample_rate=SR):
-    """Transcribe audio — Urdu, English, Punjabi.
+    """Transcribe FULL audio — splits into 25s chunks for complete coverage.
 
     Pipeline:
-      1. Groq API whisper-large-v3 (Urdu + English translation)
-      2. Local faster-whisper small (fallback if Groq unavailable)
-      3. Google Speech ur-PK + en-PK + pa-PK (extra coverage, parallel)
+      1. Google Speech ur-PK in 25s chunks (primary — no hallucination, full audio)
+      2. Groq whisper-large-v3-turbo (English translation for keyword matching)
+      3. Local whisper small (last fallback)
     """
     import soundfile as sf
-    from concurrent.futures import ThreadPoolExecutor
 
-    audio_clip = audio[:sample_rate * 60] if len(audio) > sample_rate * 60 else audio
+    total_duration = len(audio) / sample_rate
+    print(f"  Audio: {total_duration:.1f}s", flush=True)
 
     # Normalize volume
-    peak = np.max(np.abs(audio_clip))
+    peak = np.max(np.abs(audio))
     if peak > 0:
-        audio_clip = audio_clip / peak * 0.95
+        audio = audio / peak * 0.95
 
-    # Save to temp WAV
-    tmp = None
-    try:
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-            sf.write(f.name, audio_clip.astype(np.float32), sample_rate)
-            tmp = f.name
-    except Exception as e:
-        print(f"  Failed to save temp audio: {e}", flush=True)
-        return "", "error"
+    # ═══════════════════════════════════════════════════════════
+    #  1. GOOGLE SPEECH — split into 25s chunks for full audio coverage
+    # ═══════════════════════════════════════════════════════════
+    chunk_sec = 25
+    chunk_size = sample_rate * chunk_sec
+    chunks = []
+    for i in range(0, len(audio), chunk_size):
+        chunk = audio[i:i + chunk_size]
+        if len(chunk) > sample_rate * 0.5:
+            chunks.append(chunk)
 
-    transcript_parts = []
+    print(f"  Split: {len(chunks)} chunks ({chunk_sec}s each)", flush=True)
+
+    urdu_parts = []
     method = "none"
 
-    # ═══════════════════════════════════════════════════════════
-    #  1. GROQ API — whisper-large-v3 (Urdu transcription + English translation)
-    # ═══════════════════════════════════════════════════════════
-    groq_ur, groq_en = _groq_transcribe(tmp)
-    if groq_ur:
-        transcript_parts.append(groq_ur)
-        method = "groq_whisper_large_v3"
-    if groq_en and groq_en not in transcript_parts:
-        transcript_parts.append(groq_en)
-        if method == "none":
-            method = "groq_whisper_large_v3"
+    for ci, chunk in enumerate(chunks):
+        tmp_chunk = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+                sf.write(f.name, chunk.astype(np.float32), sample_rate)
+                tmp_chunk = f.name
+        except Exception:
+            continue
+
+        chunk_text = ""
+        try:
+            with sr_lib.AudioFile(tmp_chunk) as source:
+                audio_data = RECOGNIZER.record(source)
+
+            # Try Urdu
+            chunk_text = _google_transcribe_chunk(audio_data, "ur-PK")
+            if chunk_text:
+                method = "google_speech"
+                print(f"  [chunk {ci+1}/{len(chunks)} ur] {chunk_text[:100]}", flush=True)
+
+            # Try Punjabi if Urdu failed
+            if not chunk_text:
+                chunk_text = _google_transcribe_chunk(audio_data, "pa-IN")
+                if chunk_text:
+                    method = "google_speech"
+                    print(f"  [chunk {ci+1}/{len(chunks)} pa] {chunk_text[:100]}", flush=True)
+
+            # Try English if both failed
+            if not chunk_text:
+                chunk_text = _google_transcribe_chunk(audio_data, "en-PK")
+                if chunk_text:
+                    method = "google_speech"
+                    print(f"  [chunk {ci+1}/{len(chunks)} en] {chunk_text[:100]}", flush=True)
+        except Exception as e:
+            print(f"  [chunk {ci+1}] error: {e}", flush=True)
+        finally:
+            try:
+                os.unlink(tmp_chunk)
+            except:
+                pass
+
+        if chunk_text:
+            urdu_parts.append(chunk_text)
+
+    urdu_transcript = " ".join(urdu_parts)
 
     # ═══════════════════════════════════════════════════════════
-    #  2. LOCAL WHISPER — fallback if Groq fails or no API key
+    #  2. GROQ — English translation for keyword matching
     # ═══════════════════════════════════════════════════════════
-    if not transcript_parts and WHISPER_MODEL is not None:
+    english_extra = ""
+    tmp_full = None
+    try:
+        full_clip = audio[:sample_rate * 120]
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+            sf.write(f.name, full_clip.astype(np.float32), sample_rate)
+            tmp_full = f.name
+    except Exception:
+        pass
+
+    if tmp_full:
+        groq_ur, groq_en = _groq_transcribe(tmp_full)
+        if not urdu_transcript and groq_ur:
+            urdu_transcript = groq_ur
+            method = "groq_whisper"
+        if groq_en:
+            english_extra = groq_en
         try:
+            os.unlink(tmp_full)
+        except:
+            pass
+
+    # ═══════════════════════════════════════════════════════════
+    #  3. LOCAL WHISPER — last fallback
+    # ═══════════════════════════════════════════════════════════
+    if not urdu_transcript and WHISPER_MODEL is not None:
+        try:
+            tmp_wb = None
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+                sf.write(f.name, audio[:sample_rate * 60].astype(np.float32), sample_rate)
+                tmp_wb = f.name
             segments, info = WHISPER_MODEL.transcribe(
-                tmp,
-                language="ur",
-                task="transcribe",
-                beam_size=3,
-                best_of=1,
-                temperature=0.0,
+                tmp_wb, language="ur", task="transcribe",
+                beam_size=3, best_of=1, temperature=0.0,
                 vad_filter=True,
                 vad_parameters=dict(min_silence_duration_ms=300, speech_pad_ms=200),
             )
             whisper_text = " ".join(seg.text.strip() for seg in segments).strip()
             if whisper_text:
-                transcript_parts.append(whisper_text)
-                method = "faster_whisper_local"
-                print(f"  [whisper-local] {whisper_text[:200]}", flush=True)
+                if _detect_hallucination(whisper_text):
+                    whisper_text = _clean_hallucination(whisper_text)
+                if whisper_text:
+                    urdu_transcript = whisper_text
+                    method = "whisper_local"
+                    print(f"  [whisper-local] {whisper_text[:200]}", flush=True)
+            try:
+                os.unlink(tmp_wb)
+            except:
+                pass
         except Exception as e:
             print(f"  whisper-local error: {e}", flush=True)
 
-    # ═══════════════════════════════════════════════════════════
-    #  3. GOOGLE SPEECH — Urdu + English + Punjabi (parallel thread)
-    # ═══════════════════════════════════════════════════════════
-    def _google_transcribe():
-        results = []
-        try:
-            with sr_lib.AudioFile(tmp) as source:
-                audio_data = RECOGNIZER.record(source)
-            for lang, label in [("ur-PK", "google-ur"), ("en-PK", "google-en"), ("pa-PK", "google-pa")]:
-                try:
-                    text = RECOGNIZER.recognize_google(audio_data, language=lang)
-                    if text and text.strip() and text.strip() not in [r[1] for r in results]:
-                        results.append((label, text.strip()))
-                except (sr_lib.UnknownValueError, sr_lib.RequestError):
-                    pass
-        except Exception as e:
-            print(f"  Google Speech error: {e}", flush=True)
-        return results
-
-    google_future = None
-    try:
-        executor = ThreadPoolExecutor(max_workers=1)
-        google_future = executor.submit(_google_transcribe)
-    except Exception:
-        pass
-
-    if google_future:
-        try:
-            google_results = google_future.result(timeout=15)
-            for label, text in google_results:
-                if text not in transcript_parts:
-                    transcript_parts.append(text)
-                    if method == "none":
-                        method = "google_speech"
-                    print(f"  [{label}] {text[:150]}", flush=True)
-        except Exception:
-            print("  Google Speech timeout/error", flush=True)
-
-    # Cleanup
-    try:
-        os.unlink(tmp)
-    except:
-        pass
-
-    if not transcript_parts:
+    if not urdu_transcript:
         print("  No transcript from any engine", flush=True)
         return "", "no_speech_detected"
 
-    transcript = " | ".join(transcript_parts)
-    print(f"  Final [{method}]: {transcript[:200]}", flush=True)
+    # Single clean output: Urdu (displayed) + English (hidden, keywords only)
+    transcript = urdu_transcript + (" | " + english_extra if english_extra else "")
+    print(f"  Final [{method}]: {urdu_transcript[:200]}", flush=True)
 
     return transcript, method
 
