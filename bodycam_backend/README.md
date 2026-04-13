@@ -57,5 +57,5 @@ Use Azure Blob for audio file storage
 
 Grok API
 Deepgram API Keys
-
-
+Video File: FFmpeg
+Google Cloud Speech API Get and Auccorate result::

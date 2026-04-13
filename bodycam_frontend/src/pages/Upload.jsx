@@ -96,20 +96,23 @@ export default function Upload() {
                 cursor:'pointer', background:drag ? 'rgba(59,130,246,0.08)' : '#0B0F1A',
                 transition:'all .25s' }}>
               <input ref={inputRef} type="file"
-                accept=".wav,.mp3,.mp4,.webm,.ogg,.m4a,.flac"
+                accept=".wav,.mp3,.mp4,.webm,.ogg,.m4a,.flac,.mov,.avi,.mkv,.aac,.3gp,.wma,.opus,audio/*,video/*"
                 style={{ display:'none' }}
                 onChange={e => handleFile(e.target.files[0])}/>
               {file ? (
                 <div>
                   <div style={{ fontSize:'32px', marginBottom:'10px', color:'#10B981' }}>✓</div>
                   <div style={{ fontSize:'14px', fontWeight:700, color:'#F1F5F9', marginBottom:'6px', wordBreak:'break-all' }}>{file.name}</div>
-                  <div style={{ fontSize:'12px', color:'#64748B' }}>{(file.size/1024/1024).toFixed(2)} MB · Click to change</div>
+                  <div style={{ fontSize:'12px', color:'#64748B' }}>
+                    {(file.size/1024/1024).toFixed(2)} MB · {file.type.startsWith('video') ? '🎬 Video' : '🎙 Audio'} · Click to change
+                  </div>
                 </div>
               ) : (
                 <div>
                   <div style={{ fontSize:'32px', color:'#3B82F6', marginBottom:'10px' }}>↑</div>
-                  <div style={{ fontSize:'14px', fontWeight:700, color:'#94A3B8', marginBottom:'6px' }}>Drop body cam recording here</div>
-                  <div style={{ fontSize:'12px', color:'#475569' }}>WAV · MP3 · MP4 · WebM · OGG · M4A</div>
+                  <div style={{ fontSize:'14px', fontWeight:700, color:'#94A3B8', marginBottom:'6px' }}>Drop Audio or Video here</div>
+                  <div style={{ fontSize:'11px', color:'#10B981', fontWeight:600, marginBottom:'4px' }}>🎙 Audio: WAV · MP3 · OGG · M4A · FLAC · AAC</div>
+                  <div style={{ fontSize:'11px', color:'#3B82F6', fontWeight:600 }}>🎬 Video: MP4 · WebM · MOV · AVI · MKV · 3GP</div>
                 </div>
               )}
             </div>
@@ -242,8 +245,11 @@ function ResultPanel({ result: r }) {
   const totalViols = r.violations?.length || 0
   const toneScore = r.tone_score || 0
   const kwScore = r.keyword_score || 0
-  const transcriptMethod = (r.transcription_method || '').includes('groq') ? 'Groq Whisper Large-v3'
-    : (r.transcription_method || '').includes('google') ? 'Google Speech AI' : r.transcription_method || 'Auto'
+  const transcriptMethod = (r.transcription_method || '').includes('deepgram') ? 'Deepgram Nova-3'
+    : (r.transcription_method || '').includes('groq') ? 'Groq Whisper'
+    : (r.transcription_method || '').includes('google') ? 'Google Speech AI'
+    : (r.transcription_method || '').includes('whisper') ? 'Whisper AI' : r.transcription_method || 'Auto'
+  const mediaType = r.media_type || 'audio'
 
   return (
     <div className="fade-in">
@@ -255,8 +261,13 @@ function ResultPanel({ result: r }) {
         animation: sev === 'CRITICAL' ? 'criticalPulse 3s infinite' : 'none' }}>
         <ScoreRing score={r.total_score} severity={sev} size={130}/>
         <div style={{ flex:1 }}>
-          <div style={{ display:'flex', alignItems:'center', gap:'12px', marginBottom:'10px' }}>
+          <div style={{ display:'flex', alignItems:'center', gap:'10px', marginBottom:'10px', flexWrap:'wrap' }}>
             <SeverityBadge severity={sev}/>
+            <span style={{ fontSize:'11px', fontWeight:700, color:'#3B82F6',
+              background:'rgba(59,130,246,0.12)', padding:'4px 12px', borderRadius:'8px',
+              border:'1px solid rgba(59,130,246,0.25)' }}>
+              {mediaType === 'video' ? '🎬 Video' : '🎙 Audio'}
+            </span>
             {totalViols > 0 && (
               <span style={{ fontSize:'11px', fontWeight:700, color:'#EF4444',
                 background:'rgba(239,68,68,0.12)', padding:'4px 12px', borderRadius:'8px',

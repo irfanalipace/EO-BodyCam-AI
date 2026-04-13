@@ -1234,19 +1234,49 @@ def enroll_officer():
             os.unlink(path)
 
 
+VIDEO_EXTS = {'.mp4', '.webm', '.mov', '.avi', '.mkv', '.3gp', '.flv', '.wmv'}
+AUDIO_EXTS = {'.wav', '.mp3', '.ogg', '.m4a', '.flac', '.aac', '.opus', '.wma'}
+
+
+def _load_media(path, filename):
+    """Load audio from file. Handles both audio and video files.
+    For video, extracts audio track automatically via librosa (requires ffmpeg).
+    """
+    ext = os.path.splitext(filename)[1].lower()
+    is_video = ext in VIDEO_EXTS
+
+    try:
+        # librosa.load handles both audio + video (extracts audio track)
+        audio, sr_ = librosa.load(path, sr=SR, mono=True)
+        return audio, sr_, is_video
+    except Exception as e:
+        if is_video:
+            raise Exception(
+                f"Video file detected but FFmpeg is required to extract audio. "
+                f"Install FFmpeg: https://ffmpeg.org/download.html OR convert video to audio first. "
+                f"Original error: {str(e)[:100]}"
+            )
+        raise
+
+
 @app.route("/api/analyze/upload", methods=["POST"])
 def analyze_upload():
     officer_id = request.form.get("officer_id", "EO_001")
     f          = request.files.get("audio")
-    if not f: return jsonify({"error": "No audio file uploaded"}), 400
+    if not f: return jsonify({"error": "No audio/video file uploaded"}), 400
     suffix = os.path.splitext(f.filename)[1] or ".wav"
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
         f.save(tmp.name)
         path = tmp.name
     try:
         print(f"Analyzing: {f.filename}", flush=True)
-        audio, sr_ = librosa.load(path, sr=SR)
-        return jsonify(run_analysis(audio, sr_, officer_id, source="upload", filename=f.filename))
+        audio, sr_, is_video = _load_media(path, f.filename)
+        if is_video:
+            print(f"  Video file — extracted audio track ({len(audio)/sr_:.1f}s)", flush=True)
+        result = run_analysis(audio, sr_, officer_id, source="upload", filename=f.filename)
+        if isinstance(result, dict):
+            result["media_type"] = "video" if is_video else "audio"
+        return jsonify(result)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
     finally:
