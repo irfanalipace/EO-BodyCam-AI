@@ -56,4 +56,6 @@ Connect to SQL Server instead of in-memory store
 Use Azure Blob for audio file storage
 
 Grok API
+Deepgram API Keys
+
 
