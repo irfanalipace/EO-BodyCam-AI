@@ -49,6 +49,39 @@ python server.py
 
 ## Production Upgrade
 
+Projecrs Library and the Version
+
+AI BodyCam Detector/
+├── bodycam_backend/        ← Python Flask server
+│   ├── server.py           ← Main backend (1400+ lines)
+│   ├── models/             ← AI models
+│   ├── audio_samples/      ← Test audio files
+│   └── .env                ← API keys
+└── bodycam_frontend/       ← React web app
+    └── src/
+        ├── App.jsx         ← Main app
+        ├── pages/          ← 6 pages (Dashboard, Upload, etc.)
+        └── components/UI.jsx  ← Reusable UI
+
+Library	Version	Purpose
+Flask	3.0.3	Web server & REST API
+flask-cors	4.0.0	Cross-origin requests
+flask-socketio	5.3.6	Real-time WebSocket alerts
+librosa	0.10.2	Audio processing & feature extraction
+numpy	1.26.4	Numerical computing
+scikit-learn	1.4.2	SVM tone classifier
+scipy	1.13.0	Signal processing
+soundfile	0.12.1	Audio file read/write
+eventlet	0.36.1	Async networking
+python-dotenv	1.0.1	Environment variables
+SpeechRecognition	3.14.4	Google Speech (free)
+faster-whisper	1.1.0	Local Whisper AI
+requests	2.31+	HTTP calls (Deepgram API)
+
+
+
+
+
 Replace K-Means with Pyannote speaker-diarization-community-1
 Replace MFCC cosine with ECAPA-TDNN (SpeechBrain)
 Replace simulated transcript with Whisper medium (Urdu)

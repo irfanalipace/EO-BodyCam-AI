@@ -3,7 +3,7 @@ EO Bodycam AI — Backend API v5.0
 Complete Enforcement Officer Monitoring System
 Detects: NORMAL, HARSH, ANGRY, BRIBE_TONE emotions
 Keywords: 500+ Urdu/English/Punjabi violation words in 10 categories
-Transcription: Deepgram Nova-3 (primary) + Google Speech (fallback) + local whisper-small
+Transcription: Gemini 2.5 Flash (primary) + Deepgram (fallback) + Google Speech (last resort)
 Categories: RISHWAT, DHAMKI, GALI, RUDE_BEHAVIOR, HARASSMENT,
            GALAT_CHALLAN, ANGRY_TONE, POWER_ABUSE, INTIMIDATION, UNPROFESSIONAL
 Severity: NORMAL / WARNING / CRITICAL
@@ -243,20 +243,173 @@ def _google_transcribe_chunk(audio_data, language):
     return ""
 
 
+def _remove_repetitions(text):
+    """Remove adjacent phrase repetitions like 'آج آج' or 'آج آپ کو آخری آج آپ کو آخری'.
+    Preserves intentional repetitions (appearing 3+ times apart).
+    """
+    if not text:
+        return text
+
+    # Remove exact adjacent word duplicates: "آج آج" → "آج"
+    words = text.split()
+    cleaned_words = []
+    for w in words:
+        if cleaned_words and cleaned_words[-1] == w:
+            continue  # skip duplicate
+        cleaned_words.append(w)
+    text = " ".join(cleaned_words)
+
+    # Remove adjacent phrase duplicates (2-7 word phrases)
+    # "آج آپ کو آخری دن ہے آج آپ کو آخری دن ہے" → "آج آپ کو آخری دن ہے"
+    import re
+    for phrase_len in range(7, 1, -1):  # try longest first
+        words = text.split()
+        result = []
+        i = 0
+        while i < len(words):
+            # Check if next phrase_len words match previous phrase_len words
+            if i + phrase_len * 2 <= len(words):
+                first = words[i:i + phrase_len]
+                second = words[i + phrase_len:i + phrase_len * 2]
+                if first == second:
+                    # Skip the duplicate, keep only first occurrence
+                    result.extend(first)
+                    i += phrase_len * 2
+                    continue
+            result.append(words[i])
+            i += 1
+        text = " ".join(result)
+
+    return text
+
+
+def _gemini_transcribe(audio_path):
+    """Transcribe via Google Gemini 2.5 Flash — excellent Urdu/Punjabi/English support.
+
+    Returns tuple: (urdu_text, english_translation)
+    """
+    import requests, base64
+    key = os.environ.get("GEMINI_API_KEY", "")
+    if not key:
+        return "", ""
+
+    try:
+        with open(audio_path, "rb") as f:
+            audio_b64 = base64.b64encode(f.read()).decode("utf-8")
+    except Exception as e:
+        print(f"  Gemini file read error: {e}", flush=True)
+        return "", ""
+
+    urdu_text = ""
+    english_text = ""
+
+    # Prompt 1: Urdu transcription with strict no-repetition instructions
+    try:
+        payload = {
+            "contents": [{"parts": [
+                {"text": (
+                    "You are a Pakistani Urdu transcription expert. "
+                    "Transcribe this audio EXACTLY ONCE as spoken in Urdu script. "
+                    "CRITICAL RULES:\n"
+                    "1. DO NOT repeat phrases or words. Each phrase appears only once even if you're uncertain.\n"
+                    "2. DO NOT duplicate sentences. If unsure, transcribe it once only.\n"
+                    "3. Keep Urdu words in Urdu script, English words in English.\n"
+                    "4. Use standard punctuation (۔ ،).\n"
+                    "5. If audio has no clear speech, return empty.\n"
+                    "6. Return ONLY the transcription text — no explanations, no markdown, no labels.\n"
+                    "7. Listen carefully - if the speaker says something once, write it once."
+                )},
+                {"inline_data": {"mime_type": "audio/wav", "data": audio_b64}}
+            ]}],
+            "generationConfig": {
+                "temperature": 0.0,
+                "maxOutputTokens": 2000,
+                "topK": 1,
+                "topP": 0.1,
+            }
+        }
+        resp = requests.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={key}",
+            json=payload, timeout=90
+        )
+        if resp.status_code == 200:
+            try:
+                text = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+                if text and len(text) > 1:
+                    # Clean repetitions (Gemini sometimes doubles phrases)
+                    cleaned = _remove_repetitions(text)
+                    if cleaned != text:
+                        print(f"  [gemini-ur] removed repetitions", flush=True)
+                    # Extra hallucination check
+                    if _detect_hallucination(cleaned):
+                        cleaned = _clean_hallucination(cleaned)
+                    urdu_text = cleaned
+                    print(f"  [gemini-ur] {urdu_text[:200]}", flush=True)
+            except (KeyError, IndexError):
+                print(f"  [gemini-ur] empty response", flush=True)
+        else:
+            print(f"  Gemini Urdu error {resp.status_code}: {resp.text[:150]}", flush=True)
+    except Exception as e:
+        print(f"  Gemini Urdu error: {e}", flush=True)
+
+    # Prompt 2: English translation (for keyword matching)
+    if urdu_text:
+        try:
+            payload = {
+                "contents": [{"parts": [
+                    {"text": (
+                        "Translate this audio to Roman Urdu / English. "
+                        "Write Urdu words in Roman letters (like 'rishwat', 'bakwas', 'chup raho'). "
+                        "DO NOT repeat phrases. Each phrase appears only once. "
+                        "Return ONLY the transliteration, no explanations."
+                    )},
+                    {"inline_data": {"mime_type": "audio/wav", "data": audio_b64}}
+                ]}],
+                "generationConfig": {
+                    "temperature": 0.0,
+                    "maxOutputTokens": 2000,
+                    "topK": 1,
+                    "topP": 0.1,
+                }
+            }
+            resp = requests.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={key}",
+                json=payload, timeout=90
+            )
+            if resp.status_code == 200:
+                try:
+                    text = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+                    if text and len(text) > 1:
+                        cleaned = _remove_repetitions(text)
+                        if _detect_hallucination(cleaned):
+                            cleaned = _clean_hallucination(cleaned)
+                        english_text = cleaned
+                        print(f"  [gemini-en] {english_text[:200]}", flush=True)
+                except (KeyError, IndexError):
+                    pass
+        except Exception as e:
+            print(f"  Gemini English error: {e}", flush=True)
+
+    return urdu_text, english_text
+
+
 def _deepgram_transcribe(audio_path, language="ur"):
-    """Transcribe via Deepgram Nova-3 API — 90%+ accuracy, no hallucination."""
+    """Transcribe via Deepgram API — fallback only."""
     import requests
     key = os.environ.get("DEEPGRAM_API_KEY", "")
     if not key:
         return ""
 
+    # Nova-3 doesn't support Urdu — use whisper-medium for Urdu/Punjabi
+    urdu_langs = {"ur", "pa", "hi", "bn"}
+    model = "whisper-medium" if language in urdu_langs else "nova-3"
+
     try:
         with open(audio_path, "rb") as f:
             audio_data = f.read()
 
-        # Deepgram Nova-3 supports multilingual; language param guides it
         params = {
-            "model": "nova-3",
+            "model": model,
             "language": language,
             "smart_format": "true",
             "punctuate": "true",
@@ -271,7 +424,7 @@ def _deepgram_transcribe(audio_path, language="ur"):
             },
             params=params,
             data=audio_data,
-            timeout=60,
+            timeout=90,
         )
 
         if resp.status_code == 200:
@@ -279,8 +432,11 @@ def _deepgram_transcribe(audio_path, language="ur"):
             try:
                 transcript = result["results"]["channels"][0]["alternatives"][0]["transcript"]
                 if transcript and transcript.strip():
-                    print(f"  [deepgram-{language}] {transcript[:200]}", flush=True)
-                    return transcript.strip()
+                    if _detect_hallucination(transcript):
+                        transcript = _clean_hallucination(transcript)
+                    if transcript:
+                        print(f"  [deepgram-{model}-{language}] {transcript[:200]}", flush=True)
+                        return transcript.strip()
             except (KeyError, IndexError):
                 pass
         else:
@@ -316,11 +472,11 @@ def auto_transcribe(audio, sample_rate=SR):
     method = "none"
 
     # ═══════════════════════════════════════════════════════════
-    #  1. DEEPGRAM NOVA-3 — PRIMARY (best accuracy, no hallucination)
+    #  1. GEMINI 2.5 FLASH — PRIMARY (best Urdu understanding, free)
     # ═══════════════════════════════════════════════════════════
     tmp_full = None
     try:
-        full_clip = audio[:sample_rate * 300]  # up to 5 minutes for Deepgram
+        full_clip = audio[:sample_rate * 300]  # up to 5 minutes
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
             sf.write(f.name, full_clip.astype(np.float32), sample_rate)
             tmp_full = f.name
@@ -328,31 +484,28 @@ def auto_transcribe(audio, sample_rate=SR):
         print(f"  Temp file error: {e}", flush=True)
 
     if tmp_full:
-        # Try Urdu first
-        dg_text = _deepgram_transcribe(tmp_full, language="ur")
+        gemini_ur, gemini_en = _gemini_transcribe(tmp_full)
+        if gemini_ur:
+            urdu_transcript = gemini_ur
+            method = "gemini_2.5_flash"
+        if gemini_en:
+            english_extra = gemini_en
 
-        # If Urdu empty, try Punjabi
+    # ═══════════════════════════════════════════════════════════
+    #  2. DEEPGRAM — FALLBACK if Gemini fails
+    # ═══════════════════════════════════════════════════════════
+    if not urdu_transcript and tmp_full:
+        print(f"  Gemini failed, trying Deepgram...", flush=True)
+        dg_text = _deepgram_transcribe(tmp_full, language="ur")
         if not dg_text:
             dg_text = _deepgram_transcribe(tmp_full, language="pa")
-
-        # If both empty, try multi-language auto-detect
-        if not dg_text:
-            dg_text = _deepgram_transcribe(tmp_full, language="multi")
-
-        # If still empty, try English
         if not dg_text:
             dg_text = _deepgram_transcribe(tmp_full, language="en")
-
         if dg_text:
             urdu_transcript = dg_text
-            method = "deepgram_nova3"
+            method = "deepgram"
 
-        # Also get English translation for keyword matching
-        if urdu_transcript:
-            en_text = _deepgram_transcribe(tmp_full, language="en")
-            if en_text and en_text != urdu_transcript:
-                english_extra = en_text
-
+    if tmp_full:
         try:
             os.unlink(tmp_full)
         except:
@@ -1455,9 +1608,11 @@ if __name__ == "__main__":
     print(f"\n{'='*60}")
     print(f" EO Bodycam AI Server v5.0 — Complete Monitoring System")
     print(f"{'='*60}")
-    dg_status = "ACTIVE" if os.environ.get("DEEPGRAM_API_KEY") else "NOT SET (set DEEPGRAM_API_KEY for best accuracy)"
+    gem_status = "ACTIVE" if os.environ.get("GEMINI_API_KEY") else "NOT SET"
+    dg_status = "ACTIVE" if os.environ.get("DEEPGRAM_API_KEY") else "NOT SET"
+    print(f" Gemini API:    {gem_status}")
     print(f" Deepgram API:  {dg_status}")
-    print(f" Transcription: Deepgram Nova-3 → Google Speech (fallback) → local whisper-small")
+    print(f" Transcription: Gemini 2.5 Flash → Deepgram (fallback) → Google Speech (last resort)")
     print(f" Emotions:      {' / '.join(emotions)}")
     print(f" Warning:       score >= {CONFIG['warning_score']}")
     print(f" Critical:      score >= {CONFIG['critical_score']}")
