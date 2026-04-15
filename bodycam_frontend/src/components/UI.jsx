@@ -211,7 +211,7 @@ export function ViolationSummary({ violations = [] }) {
   return (
     <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(130px, 1fr))', gap:'10px' }}>
       {Object.entries(cats).map(([key, val]) => {
-        const cat = CATEGORY_STYLE[key] || { icon:'●', color:'#64748B', bg:'rgba(100,116,139,0.1)' }
+        const cat = CATEGORY_STYLE[key] || { icon:'●', color:'white', bg:'rgba(100,116,139,0.1)' }
         return (
           <div key={key} style={{ background:cat.bg, border:`1px solid ${cat.color}25`,
             borderRadius:'12px', padding:'14px', textAlign:'center',
@@ -222,7 +222,7 @@ export function ViolationSummary({ violations = [] }) {
               {cat.label || key.replace(/_/g,' ')}
             </div>
             <div style={{ fontSize:'20px', fontWeight:800, color:cat.color }}>+{val.score}</div>
-            <div style={{ fontSize:'10px', color:'#64748B', marginTop:'3px' }}>
+            <div style={{ fontSize:'10px', color:'white', marginTop:'3px' }}>
               {val.keywords.length} keyword{val.keywords.length !== 1 ? 's' : ''}
             </div>
           </div>

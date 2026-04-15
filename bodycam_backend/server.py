@@ -3,7 +3,7 @@ EO Bodycam AI — Backend API v5.0
 Complete Enforcement Officer Monitoring System
 Detects: NORMAL, HARSH, ANGRY, BRIBE_TONE emotions
 Keywords: 500+ Urdu/English/Punjabi violation words in 10 categories
-Transcription: Gemini 2.5 Flash (primary) + Deepgram (fallback) + Google Speech (last resort)
+Transcription: Gemini 2.5 Flash (primary) + Google Speech (fallback) + local whisper-small
 Categories: RISHWAT, DHAMKI, GALI, RUDE_BEHAVIOR, HARASSMENT,
            GALAT_CHALLAN, ANGRY_TONE, POWER_ABUSE, INTIMIDATION, UNPROFESSIONAL
 Severity: NORMAL / WARNING / CRITICAL
@@ -244,41 +244,72 @@ def _google_transcribe_chunk(audio_data, language):
 
 
 def _remove_repetitions(text):
-    """Remove adjacent phrase repetitions like 'آج آج' or 'آج آپ کو آخری آج آپ کو آخری'.
-    Preserves intentional repetitions (appearing 3+ times apart).
+    """Aggressively remove phrase repetitions from transcription.
+
+    Handles:
+    - Adjacent word duplicates: "آج آج" → "آج"
+    - Adjacent phrase duplicates: "لین دین ہے لین دین ہے" → "لین دین ہے"
+    - Near-adjacent repetitions (gap up to 3 words): "مجھے رشوت کرنی کوئی مجھے رشوت" → "مجھے رشوت کرنی کوئی"
+    - Runs the cleaning MULTIPLE times to catch nested repetitions.
     """
     if not text:
         return text
 
-    # Remove exact adjacent word duplicates: "آج آج" → "آج"
-    words = text.split()
-    cleaned_words = []
-    for w in words:
-        if cleaned_words and cleaned_words[-1] == w:
-            continue  # skip duplicate
-        cleaned_words.append(w)
-    text = " ".join(cleaned_words)
+    prev_text = None
+    iterations = 0
+    # Keep cleaning until text stabilizes (max 5 iterations)
+    while text != prev_text and iterations < 5:
+        prev_text = text
+        iterations += 1
 
-    # Remove adjacent phrase duplicates (2-7 word phrases)
-    # "آج آپ کو آخری دن ہے آج آپ کو آخری دن ہے" → "آج آپ کو آخری دن ہے"
-    import re
-    for phrase_len in range(7, 1, -1):  # try longest first
+        # Step 1: Remove exact adjacent word duplicates
         words = text.split()
-        result = []
-        i = 0
-        while i < len(words):
-            # Check if next phrase_len words match previous phrase_len words
-            if i + phrase_len * 2 <= len(words):
-                first = words[i:i + phrase_len]
-                second = words[i + phrase_len:i + phrase_len * 2]
-                if first == second:
-                    # Skip the duplicate, keep only first occurrence
-                    result.extend(first)
-                    i += phrase_len * 2
-                    continue
-            result.append(words[i])
-            i += 1
-        text = " ".join(result)
+        cleaned_words = []
+        for w in words:
+            if cleaned_words and cleaned_words[-1] == w:
+                continue
+            cleaned_words.append(w)
+        text = " ".join(cleaned_words)
+
+        # Step 2: Remove adjacent phrase duplicates (longest first, up to 10 words)
+        for phrase_len in range(10, 1, -1):
+            words = text.split()
+            result = []
+            i = 0
+            while i < len(words):
+                if i + phrase_len * 2 <= len(words):
+                    first = words[i:i + phrase_len]
+                    second = words[i + phrase_len:i + phrase_len * 2]
+                    if first == second:
+                        result.extend(first)
+                        i += phrase_len * 2
+                        continue
+                result.append(words[i])
+                i += 1
+            text = " ".join(result)
+
+        # Step 3: Remove near-adjacent phrase repetitions (gap 1-3 words)
+        # Example: "مجھے رشوت کوئی مجھے رشوت" where "مجھے رشوت" repeats with gap
+        for phrase_len in range(6, 1, -1):
+            for gap in range(1, 4):  # gap of 1, 2, or 3 words
+                words = text.split()
+                result = []
+                i = 0
+                while i < len(words):
+                    # Look for: [phrase_len words] [gap words] [same phrase_len words]
+                    pos_first = i
+                    pos_second = i + phrase_len + gap
+                    if pos_second + phrase_len <= len(words):
+                        first = words[pos_first:pos_first + phrase_len]
+                        second = words[pos_second:pos_second + phrase_len]
+                        if first == second and len(" ".join(first)) > 4:
+                            # Keep first occurrence + gap, skip the duplicate
+                            result.extend(words[i:i + phrase_len + gap])
+                            i += phrase_len + gap + phrase_len
+                            continue
+                    result.append(words[i])
+                    i += 1
+                text = " ".join(result)
 
     return text
 
@@ -393,6 +424,92 @@ def _gemini_transcribe(audio_path):
     return urdu_text, english_text
 
 
+def _gemini_assess_behavior(transcript, tone_label, violations, acoustics):
+    """Use Gemini to generate a professional behavior assessment based on transcript + analysis.
+    Returns human-readable paragraph describing the officer's behavior.
+    """
+    import requests
+    key = os.environ.get("GEMINI_API_KEY", "")
+    if not key or not transcript:
+        return ""
+
+    # Build context for Gemini
+    viol_summary = ""
+    if violations:
+        cats = {}
+        for v in violations:
+            t = v.get("type", "OTHER")
+            cats[t] = cats.get(t, 0) + 1
+        viol_summary = "Detected violations: " + ", ".join(f"{k} ({v}x)" for k, v in cats.items())
+
+    acoustic_info = ""
+    if acoustics:
+        pitch = acoustics.get("avg_pitch_hz", 0)
+        ratio = acoustics.get("pitch_ratio", 0)
+        energy = acoustics.get("avg_energy", 0)
+        agitation = acoustics.get("agitation", 0)
+        loud_dur = acoustics.get("loud_duration_sec", 0)
+        acoustic_info = (
+            f"Voice analysis: pitch={pitch}Hz (ratio={ratio}x baseline), "
+            f"energy={energy}, agitation={agitation}, loud_duration={loud_dur}s"
+        )
+
+    prompt = f"""You are an expert professional conduct evaluator analyzing a bodycam recording of an Enforcement Officer (EO) interaction with a civilian.
+
+**Audio Transcript (Urdu/English):**
+{transcript[:2000]}
+
+**AI Tone Classification:** {tone_label}
+
+**{acoustic_info}**
+
+**{viol_summary}**
+
+Write a PROFESSIONAL behavior assessment in 3-4 sentences. Analyze:
+1. Whether the officer used abusive, harsh, or unprofessional language
+2. The tone (aggressive/calm/intimidating/bribing)
+3. Voice characteristics (shouting/loud/calm based on acoustics)
+4. Key violations observed
+5. Severity of professional ethics breach
+
+Rules:
+- Write ONLY the assessment paragraph, no headings, no bullet points
+- Be direct and professional, like a disciplinary report
+- Use past tense
+- Focus on WHAT the officer did wrong (or well)
+- Mention specific behaviors if evident
+- Keep it 60-100 words
+
+Return only the assessment text."""
+
+    try:
+        payload = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {
+                "temperature": 0.3,
+                "maxOutputTokens": 400,
+                "topP": 0.8,
+            }
+        }
+        resp = requests.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={key}",
+            json=payload, timeout=30
+        )
+        if resp.status_code == 200:
+            try:
+                text = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+                print(f"  [gemini-assessment] {text[:150]}", flush=True)
+                return text
+            except (KeyError, IndexError):
+                pass
+        else:
+            print(f"  Gemini assessment error {resp.status_code}", flush=True)
+    except Exception as e:
+        print(f"  Gemini assessment error: {e}", flush=True)
+
+    return ""
+
+
 def _deepgram_transcribe(audio_path, language="ur"):
     """Transcribe via Deepgram API — fallback only."""
     import requests
@@ -491,31 +608,16 @@ def auto_transcribe(audio, sample_rate=SR):
         if gemini_en:
             english_extra = gemini_en
 
-    # ═══════════════════════════════════════════════════════════
-    #  2. DEEPGRAM — FALLBACK if Gemini fails
-    # ═══════════════════════════════════════════════════════════
-    if not urdu_transcript and tmp_full:
-        print(f"  Gemini failed, trying Deepgram...", flush=True)
-        dg_text = _deepgram_transcribe(tmp_full, language="ur")
-        if not dg_text:
-            dg_text = _deepgram_transcribe(tmp_full, language="pa")
-        if not dg_text:
-            dg_text = _deepgram_transcribe(tmp_full, language="en")
-        if dg_text:
-            urdu_transcript = dg_text
-            method = "deepgram"
-
-    if tmp_full:
         try:
             os.unlink(tmp_full)
         except:
             pass
 
     # ═══════════════════════════════════════════════════════════
-    #  2. GOOGLE SPEECH CHUNKS — FALLBACK if Deepgram failed
+    #  2. GOOGLE SPEECH CHUNKS — FALLBACK if Gemini failed
     # ═══════════════════════════════════════════════════════════
     if not urdu_transcript:
-        print(f"  Deepgram failed, trying Google Speech chunks...", flush=True)
+        print(f"  Gemini failed, trying Google Speech chunks...", flush=True)
         chunk_sec = 25
         chunk_size = sample_rate * chunk_sec
         chunks = []
@@ -1218,6 +1320,9 @@ def run_analysis(audio, sr, officer_id="EO_001", source="upload", filename=""):
     # Behavior assessment
     behavior = assess_behavior(total_score, severity, tone_label, all_viols, transcript)
 
+    # AI-generated behavior assessment (Gemini)
+    ai_assessment = _gemini_assess_behavior(transcript, tone_label, all_viols, acoustics)
+
     print(f"  Score:{total_score} tone={tone_score} kw={kw_score} -> {severity}", flush=True)
     print(f"  Emotion:{tone_label} Violations:{len(all_viols)} Rating:{behavior['overall_rating']}", flush=True)
 
@@ -1251,6 +1356,7 @@ def run_analysis(audio, sr, officer_id="EO_001", source="upload", filename=""):
         "total_score":          total_score,
         "severity":             severity,
         "behavior_assessment":  behavior,
+        "ai_assessment":        ai_assessment,
         "alert_required":       severity != "NORMAL",
         "processing_time_sec":  round(time.time() - t0, 2),
     }
@@ -1608,11 +1714,9 @@ if __name__ == "__main__":
     print(f"\n{'='*60}")
     print(f" EO Bodycam AI Server v5.0 — Complete Monitoring System")
     print(f"{'='*60}")
-    gem_status = "ACTIVE" if os.environ.get("GEMINI_API_KEY") else "NOT SET"
-    dg_status = "ACTIVE" if os.environ.get("DEEPGRAM_API_KEY") else "NOT SET"
+    gem_status = "ACTIVE" if os.environ.get("GEMINI_API_KEY") else "NOT SET (set GEMINI_API_KEY for best accuracy)"
     print(f" Gemini API:    {gem_status}")
-    print(f" Deepgram API:  {dg_status}")
-    print(f" Transcription: Gemini 2.5 Flash → Deepgram (fallback) → Google Speech (last resort)")
+    print(f" Transcription: Gemini 2.5 Flash → Google Speech (fallback) → local whisper-small")
     print(f" Emotions:      {' / '.join(emotions)}")
     print(f" Warning:       score >= {CONFIG['warning_score']}")
     print(f" Critical:      score >= {CONFIG['critical_score']}")

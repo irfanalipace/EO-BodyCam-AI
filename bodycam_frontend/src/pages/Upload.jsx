@@ -245,8 +245,7 @@ function ResultPanel({ result: r }) {
   const totalViols = r.violations?.length || 0
   const toneScore = r.tone_score || 0
   const kwScore = r.keyword_score || 0
-  const transcriptMethod = (r.transcription_method || '').includes('deepgram') ? 'Deepgram Nova-3'
-    : (r.transcription_method || '').includes('groq') ? 'Groq Whisper'
+  const transcriptMethod = (r.transcription_method || '').includes('gemini') ? 'Gemini 2.5 Flash'
     : (r.transcription_method || '').includes('google') ? 'Google Speech AI'
     : (r.transcription_method || '').includes('whisper') ? 'Whisper AI' : r.transcription_method || 'Auto'
   const mediaType = r.media_type || 'audio'
@@ -323,11 +322,72 @@ function ResultPanel({ result: r }) {
               {transcriptMethod}
             </span>
           </div>
-          <div style={{ fontSize:'14px', color:'#CBD5E1', lineHeight:1.9,
-            background:'#0B0F1A', borderRadius:'12px', padding:'16px 18px',
-            borderLeft:'4px solid #3B82F6', fontFamily:'Georgia, serif',
-            direction:'rtl', textAlign:'right' }}>
-            "{(r.transcript || '').split(' | ')[0]}"
+          {(() => {
+            const parts = (r.transcript || '').split(' | ')
+            const urdu = parts[0] || ''
+            const english = parts[1] || ''
+            return (
+              <div style={{ display:'grid', gridTemplateColumns: english ? '1fr 1fr' : '1fr', gap:'10px' }}>
+                {/* Urdu */}
+                <div style={{ background:'#0B0F1A', borderRadius:'12px', padding:'16px 18px',
+                  borderLeft:'4px solid #3B82F6' }}>
+                  <div style={{ display:'flex', alignItems:'center', gap:'8px', marginBottom:'10px' }}>
+                    <span style={{ fontSize:'16px' }}>🇵🇰</span>
+                    <span style={{ fontSize:'10px', fontWeight:700, color:'#3B82F6',
+                      textTransform:'uppercase', letterSpacing:'0.08em' }}>Urdu / Original</span>
+                  </div>
+                  <div style={{ fontSize:'14px', color:'#F1F5F9', lineHeight:2,
+                    fontFamily:'Georgia, serif', direction:'rtl', textAlign:'right' }}>
+                    "{urdu}"
+                  </div>
+                </div>
+                {/* English */}
+                {english && (
+                  <div style={{ background:'#0B0F1A', borderRadius:'12px', padding:'16px 18px',
+                    borderLeft:'4px solid #10B981' }}>
+                    <div style={{ display:'flex', alignItems:'center', gap:'8px', marginBottom:'10px' }}>
+                      <span style={{ fontSize:'16px' }}>🇬🇧</span>
+                      <span style={{ fontSize:'10px', fontWeight:700, color:'#10B981',
+                        textTransform:'uppercase', letterSpacing:'0.08em' }}>English / Roman Urdu</span>
+                    </div>
+                    <div style={{ fontSize:'14px', color:'#F1F5F9', lineHeight:1.8,
+                      fontFamily:'Georgia, serif' }}>
+                      "{english}"
+                    </div>
+                  </div>
+                )}
+              </div>
+            )
+          })()}
+        </div>
+      )}
+
+      {/* 🤖 GEMINI AI ASSESSMENT */}
+      {r.ai_assessment && (
+        <div style={{ ...CARD, background:'linear-gradient(135deg, rgba(139,92,246,0.08), rgba(59,130,246,0.08))',
+          border:'1px solid rgba(139,92,246,0.25)' }}>
+          <div style={{ display:'flex', alignItems:'center', gap:'10px', marginBottom:'14px' }}>
+            <div style={{ width:36, height:36, borderRadius:'10px',
+              background:'linear-gradient(135deg, #8B5CF6, #3B82F6)',
+              display:'flex', alignItems:'center', justifyContent:'center',
+              boxShadow:'0 2px 8px rgba(139,92,246,0.3)' }}>
+              <span style={{ fontSize:'18px' }}>🤖</span>
+            </div>
+            <div>
+              <div style={{ fontSize:'14px', fontWeight:800, color:'#10B981', letterSpacing:'-0.01em' }}>
+                Officer Behavior Assessment
+              </div>
+              <div style={{ fontSize:'10px', color:'#64748B', fontWeight:600,
+                letterSpacing:'0.05em', textTransform:'uppercase' }}>
+                Professional Conduct Analysis
+              </div>
+            </div>
+          </div>
+          <div style={{ fontSize:'14px', color:'#E2E8F0', lineHeight:1.9,
+            background:'rgba(11,15,26,0.5)', borderRadius:'10px', padding:'16px 18px',
+            borderLeft:'3px solid #8B5CF6', fontStyle:'normal',
+            fontFamily:'Georgia, serif' }}>
+            {r.ai_assessment}
           </div>
         </div>
       )}
