@@ -424,6 +424,188 @@ def _gemini_transcribe(audio_path):
     return urdu_text, english_text
 
 
+def _gemini_full_analysis(audio_path, transcript, tone_label, violations, acoustics, language_hint="ur"):
+    """Run Gemini as a full Internal-Affairs analyst: uploads audio + transcript context,
+    returns a structured JSON dict with transcription, vulgar_language, false_statements,
+    loud_aggressive_voice, bribery_indicators, and overall_assessment.
+    """
+    import requests, base64
+    key = os.environ.get("GEMINI_API_KEY", "")
+    if not key:
+        return {}
+
+    audio_b64 = ""
+    mime_type = "audio/wav"
+    try:
+        ext = os.path.splitext(audio_path)[1].lower()
+        mime_map = {
+            ".wav": "audio/wav", ".mp3": "audio/mpeg", ".ogg": "audio/ogg",
+            ".flac": "audio/flac", ".m4a": "audio/mp4", ".aac": "audio/aac",
+            ".webm": "audio/webm",
+        }
+        mime_type = mime_map.get(ext, "audio/wav")
+        with open(audio_path, "rb") as f:
+            audio_b64 = base64.b64encode(f.read()).decode("utf-8")
+    except Exception as e:
+        print(f"  [gemini-full] audio read error: {e}", flush=True)
+
+    system_prompt = (
+        "You are an expert AI analyst for a Police Internal Affairs department. "
+        "Your job is to analyze body-camera audio recordings of officers interacting with civilians. "
+        "Detect: (1) VULGAR/ABUSIVE LANGUAGE — curses, slurs, insults in Urdu/Punjabi/Roman Urdu/English; "
+        "(2) FALSE/MISLEADING STATEMENTS — lies, fake charges (jhoota muqadma), misrepresentation of law; "
+        "(3) LOUD/AGGRESSIVE VOICE — shouting, yelling, intimidating delivery; "
+        "(4) BRIBERY INDICATORS — 'chai pani', 'samajh jao', 'settle karo', 'bandobast', 'nazrana', direct money mentions; "
+        "(5) OVERALL BEHAVIOR ASSESSMENT. "
+        "Analyze AUDIO directly for tone/volume/emotion. Rate severity: none/low/medium/high/critical."
+    )
+
+    analysis_prompt = """Analyze this police body-camera audio recording and provide your assessment.
+
+Listen carefully to:
+- The words spoken (in any language: Urdu, Punjabi, English, or mixed)
+- The tone and volume of voice
+- Any signs of aggression, intimidation, or unprofessional conduct
+- Any bribery-related language or hints
+
+Respond ONLY with valid JSON in this exact format (no markdown, no code fences):
+{
+    "transcription": {
+        "full_text": "Complete transcription of all speech heard",
+        "language": "detected language (ur/pa/en/mixed)",
+        "speakers": ["officer", "civilian"]
+    },
+    "vulgar_language": {
+        "detected": true/false,
+        "severity": "none/low/medium/high/critical",
+        "instances": [
+            {
+                "text": "the vulgar word or phrase",
+                "translation": "English translation if not in English",
+                "timestamp_approx": "approximate time in recording",
+                "context": "surrounding context"
+            }
+        ]
+    },
+    "false_statements": {
+        "detected": true/false,
+        "severity": "none/low/medium/high/critical",
+        "instances": [
+            {
+                "statement": "the false/misleading statement",
+                "reason": "why this appears false or misleading",
+                "timestamp_approx": "approximate time"
+            }
+        ]
+    },
+    "loud_aggressive_voice": {
+        "detected": true/false,
+        "severity": "none/low/medium/high/critical",
+        "instances": [
+            {
+                "description": "description of aggressive vocal behavior",
+                "timestamp_approx": "approximate time",
+                "type": "shouting/yelling/intimidating/threatening"
+            }
+        ]
+    },
+    "bribery_indicators": {
+        "detected": true/false,
+        "severity": "none/low/medium/high/critical",
+        "instances": [
+            {
+                "text": "the bribery-related phrase",
+                "translation": "English translation if needed",
+                "type": "direct_demand/euphemism/hint/coercion",
+                "timestamp_approx": "approximate time"
+            }
+        ]
+    },
+    "overall_assessment": {
+        "classification": "normal/concerning/unprofessional/critical",
+        "risk_score": 0-100,
+        "is_flagged": true/false,
+        "summary": "2-3 sentence summary of officer behavior",
+        "recommended_action": "what action should be taken"
+    }
+}"""
+
+    if language_hint:
+        analysis_prompt += (
+            f"\n\nNote: The primary language expected is '{language_hint}' "
+            "(Urdu/Punjabi). Pay special attention to Urdu/Punjabi slang and idioms."
+        )
+    if transcript:
+        analysis_prompt += f"\n\nReference transcript (already extracted): {transcript[:1500]}"
+    if tone_label:
+        analysis_prompt += f"\n\nAcoustic tone classifier said: {tone_label}."
+
+    # Style requirements for the summary + recommended_action — disciplinary report tone
+    analysis_prompt += (
+        "\n\nSTYLE REQUIREMENTS for `overall_assessment.summary` and `overall_assessment.recommended_action`:\n"
+        "- Write in clean PROFESSIONAL ENGLISH (translate any Urdu/Punjabi quotes into English in the summary).\n"
+        "- The `summary` must be 3-4 complete sentences in the tone of a Police Internal Affairs disciplinary report.\n"
+        "- Describe (a) what the officer did initially, (b) how their tone or language escalated, "
+        "(c) any dismissive/mocking/aggressive behavior, and (d) the unprofessional impact on the interaction.\n"
+        "- When quoting the officer, translate the quote to English (e.g., \"Don't you understand?\" not \"O tainu saunda nahi?\").\n"
+        "- The `recommended_action` must be 2-3 sentences recommending specific training "
+        "(professional communication, de-escalation, respectful tone) and any review of body-camera footage.\n"
+        "- Do NOT use bullet points, headings, or lists inside these two fields — plain prose only.\n"
+        "- Past tense for summary, imperative/advisory tone for recommended_action.\n"
+        "Example of the desired style:\n"
+        "summary: \"The officer initially issues a firm command to close the shops. However, his tone quickly "
+        "becomes impatient and aggressive, using dismissive language such as 'Don't you understand?' and repeating "
+        "the civilian's complaint in a mocking manner. This behavior reflects unprofessional communication and an "
+        "unnecessary escalation of the situation.\"\n"
+        "recommended_action: \"The officer should receive training in professional communication and de-escalation "
+        "techniques, ensuring a respectful tone while delivering lawful instructions. Reviewing body-camera footage "
+        "for similar incidents is also advised.\""
+    )
+
+    parts = [{"text": system_prompt + "\n\n" + analysis_prompt}]
+    if audio_b64:
+        parts.append({"inline_data": {"mime_type": mime_type, "data": audio_b64}})
+
+    try:
+        payload = {
+            "contents": [{"parts": parts}],
+            "generationConfig": {
+                "temperature": 0.1,
+                "maxOutputTokens": 4096,
+                "topP": 0.8,
+                "responseMimeType": "application/json",
+            }
+        }
+        resp = requests.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={key}",
+            json=payload, timeout=120
+        )
+        if resp.status_code != 200:
+            print(f"  [gemini-full] http {resp.status_code}: {resp.text[:200]}", flush=True)
+            return {}
+        raw = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+        if raw.startswith("```json"):
+            raw = raw[7:]
+        if raw.startswith("```"):
+            raw = raw[3:]
+        if raw.endswith("```"):
+            raw = raw[:-3]
+        raw = raw.strip()
+        data = json.loads(raw)
+        oa = data.get("overall_assessment", {}) or {}
+        print(
+            f"  [gemini-full] classification={oa.get('classification')} "
+            f"risk={oa.get('risk_score')} flagged={oa.get('is_flagged')}",
+            flush=True,
+        )
+        return data
+    except json.JSONDecodeError as e:
+        print(f"  [gemini-full] JSON parse error: {e}", flush=True)
+    except Exception as e:
+        print(f"  [gemini-full] error: {e}", flush=True)
+    return {}
+
+
 def _gemini_assess_behavior(transcript, tone_label, violations, acoustics):
     """Use Gemini to generate a professional behavior assessment based on transcript + analysis.
     Returns human-readable paragraph describing the officer's behavior.
@@ -1320,8 +1502,34 @@ def run_analysis(audio, sr, officer_id="EO_001", source="upload", filename=""):
     # Behavior assessment
     behavior = assess_behavior(total_score, severity, tone_label, all_viols, transcript)
 
-    # AI-generated behavior assessment (Gemini)
+    # AI-generated behavior assessment (Gemini) — text summary
     ai_assessment = _gemini_assess_behavior(transcript, tone_label, all_viols, acoustics)
+
+    # Full structured Gemini analysis (transcription, vulgar, false, aggressive, bribery, overall)
+    import soundfile as _sf
+    gemini_analysis = {}
+    tmp_assess = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as _gf:
+            _sf.write(_gf.name, analyze_audio[:sr * 300].astype(np.float32), sr)
+            tmp_assess = _gf.name
+        gemini_analysis = _gemini_full_analysis(
+            tmp_assess, transcript, tone_label, all_viols, acoustics, language_hint="ur"
+        )
+    except Exception as _e:
+        print(f"  Gemini full analysis wrapper error: {_e}", flush=True)
+    finally:
+        try:
+            if tmp_assess:
+                os.unlink(tmp_assess)
+        except Exception:
+            pass
+
+    # If Gemini returned a richer summary, prefer it for the behavior paragraph
+    if gemini_analysis:
+        oa = gemini_analysis.get("overall_assessment", {}) or {}
+        if oa.get("summary") and not ai_assessment:
+            ai_assessment = oa["summary"]
 
     print(f"  Score:{total_score} tone={tone_score} kw={kw_score} -> {severity}", flush=True)
     print(f"  Emotion:{tone_label} Violations:{len(all_viols)} Rating:{behavior['overall_rating']}", flush=True)
@@ -1357,6 +1565,7 @@ def run_analysis(audio, sr, officer_id="EO_001", source="upload", filename=""):
         "severity":             severity,
         "behavior_assessment":  behavior,
         "ai_assessment":        ai_assessment,
+        "gemini_analysis":      gemini_analysis,
         "alert_required":       severity != "NORMAL",
         "processing_time_sec":  round(time.time() - t0, 2),
     }

@@ -303,6 +303,77 @@ function ResultPanel({ result: r }) {
         </div>
       </div>
 
+   {/* Violations Detail */}
+      <div style={CARD}>
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'16px' }}>
+          <span style={LABEL}>🚨 Violations Detected from Voice</span>
+          <span style={{ fontSize:'12px', fontWeight:700, padding:'5px 14px', borderRadius:'10px',
+            background: totalViols > 0 ? 'linear-gradient(135deg, #EF4444, #DC2626)' : 'linear-gradient(135deg, #10B981, #059669)',
+            color:'#fff', boxShadow: totalViols > 0 ? '0 2px 8px rgba(239,68,68,0.3)' : '0 2px 8px rgba(16,185,129,0.3)' }}>
+            {totalViols} found
+          </span>
+        </div>
+        {totalViols > 0 ? (
+          r.violations.map((v,i) => <ViolationCard key={i} v={v} index={i}/>)
+        ) : (
+          <div style={{ textAlign:'center', padding:'28px', color:'#10B981', fontSize:'14px' }}>
+            <div style={{ fontSize:'32px', marginBottom:'10px' }}>✓</div>
+            <div style={{ fontWeight:700 }}>No violations detected</div>
+            <div style={{ fontSize:'12px', color:'#475569', marginTop:'6px' }}>Normal enforcement interaction</div>
+          </div>
+        )}
+      </div>   {/* Key metrics */}
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:'10px', marginBottom:'14px' }}>
+        {[
+          { label:'EO Voice', icon:'👤', value:r.eo_detected?'Detected':'Not found', sub:`similarity: ${r.max_similarity}`, color:r.eo_detected?'#10B981':'#EF4444' },
+          { label:'Duration', icon:'⏱', value:`${r.eo_speaking_sec}s`, sub:`of ${r.total_duration_sec}s total` },
+          { label:'Processed', icon:'⚡', value:`${r.processing_time_sec}s`, sub:`${r.speech_segments} speech segments` },
+        ].map(m => (
+          <div key={m.label} style={{ background:'#111827', border:'1px solid #1F2937', borderRadius:'14px', padding:'16px' }}>
+            <div style={{ fontSize:'10px', color:'#64748B', textTransform:'uppercase', letterSpacing:'0.07em', fontWeight:700, marginBottom:'10px' }}>
+              {m.icon} {m.label}
+            </div>
+            <div style={{ fontSize:'20px', fontWeight:800, color:m.color||'#F1F5F9', marginBottom:'4px' }}>{m.value}</div>
+            <div style={{ fontSize:'11px', color:'#475569' }}>{m.sub}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* SVM Tone */}
+      <div style={CARD}>
+        <span style={LABEL}>🧠 AI Tone Classifier</span>
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr 1fr', gap:'8px' }}>
+          {['NORMAL','HARSH','ANGRY','BRIBE_TONE'].map(l => (
+            <ToneBar key={l} label={l} prob={r.tone_proba?.[l]||0} active={r.tone_label===l}/>
+          ))}
+        </div>
+      </div>
+
+      {/* Voice Acoustics */}
+      {r.eo_detected && ac.avg_pitch_hz > 0 && (
+        <div style={CARD}>
+          <span style={LABEL}>📊 EO Voice Acoustics</span>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:'8px' }}>
+            {[
+              ['Pitch',  `${ac.avg_pitch_hz} Hz`,    ac.avg_pitch_hz > ep*1.55 ? '#EF4444':'#10B981', 'Current pitch'],
+              ['Baseline', `${ep} Hz`,                '#64748B', 'Enrolled pitch'],
+              ['Ratio',  `${ac.pitch_ratio}x`,        ac.pitch_ratio>1.55?'#EF4444':'#10B981', 'Pitch vs normal'],
+              ['Energy', `${ac.avg_energy}`,           ac.avg_energy>0.28?'#EF4444':'#10B981', 'Voice loudness'],
+              ['Loud',   `${ac.loud_duration_sec}s`,   ac.loud_duration_sec>4?'#F59E0B':'#10B981', 'Shouting duration'],
+              ['Agitation', `${ac.agitation}`,         ac.agitation>1.2?'#F59E0B':'#10B981', 'Voice instability'],
+            ].map(([lbl,val,col,desc]) => (
+              <div key={lbl} style={{ background:'#0B0F1A', borderRadius:'10px', padding:'12px', border:'1px solid #1F2937' }}>
+                <div style={{ fontSize:'10px', color:'#475569', marginBottom:'4px', textTransform:'uppercase', letterSpacing:'0.06em', fontWeight:700 }}>{lbl}</div>
+                <div style={{ fontSize:'18px', fontWeight:800, color:col }}>{val}</div>
+                <div style={{ fontSize:'10px', color:'#374151', marginTop:'3px' }}>{desc}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+   
+
       {/* Violation Summary */}
       {totalViols > 0 && (
         <div style={CARD}>
@@ -363,111 +434,243 @@ function ResultPanel({ result: r }) {
       )}
 
       {/* 🤖 GEMINI AI ASSESSMENT */}
-      {r.ai_assessment && (
-        <div style={{ ...CARD, background:'linear-gradient(135deg, rgba(139,92,246,0.08), rgba(59,130,246,0.08))',
-          border:'1px solid rgba(139,92,246,0.25)' }}>
-          <div style={{ display:'flex', alignItems:'center', gap:'10px', marginBottom:'14px' }}>
-            <div style={{ width:36, height:36, borderRadius:'10px',
-              background:'linear-gradient(135deg, #8B5CF6, #3B82F6)',
-              display:'flex', alignItems:'center', justifyContent:'center',
-              boxShadow:'0 2px 8px rgba(139,92,246,0.3)' }}>
-              <span style={{ fontSize:'18px' }}>🤖</span>
-            </div>
-            <div>
-              <div style={{ fontSize:'14px', fontWeight:800, color:'#10B981', letterSpacing:'-0.01em' }}>
-                Officer Behavior Assessment
-              </div>
-              <div style={{ fontSize:'10px', color:'#64748B', fontWeight:600,
-                letterSpacing:'0.05em', textTransform:'uppercase' }}>
-                Professional Conduct Analysis
-              </div>
-            </div>
-          </div>
-          <div style={{ fontSize:'14px', color:'#E2E8F0', lineHeight:1.9,
-            background:'rgba(11,15,26,0.5)', borderRadius:'10px', padding:'16px 18px',
-            borderLeft:'3px solid #8B5CF6', fontStyle:'normal',
-            fontFamily:'Georgia, serif' }}>
-            {r.ai_assessment}
-          </div>
-        </div>
+      {(r.ai_assessment || r.gemini_analysis) && (
+        <GeminiAssessment assessment={r.ai_assessment} analysis={r.gemini_analysis}/>
       )}
 
-      {/* Key metrics */}
-      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:'10px', marginBottom:'14px' }}>
-        {[
-          { label:'EO Voice', icon:'👤', value:r.eo_detected?'Detected':'Not found', sub:`similarity: ${r.max_similarity}`, color:r.eo_detected?'#10B981':'#EF4444' },
-          { label:'Duration', icon:'⏱', value:`${r.eo_speaking_sec}s`, sub:`of ${r.total_duration_sec}s total` },
-          { label:'Processed', icon:'⚡', value:`${r.processing_time_sec}s`, sub:`${r.speech_segments} speech segments` },
-        ].map(m => (
-          <div key={m.label} style={{ background:'#111827', border:'1px solid #1F2937', borderRadius:'14px', padding:'16px' }}>
-            <div style={{ fontSize:'10px', color:'#64748B', textTransform:'uppercase', letterSpacing:'0.07em', fontWeight:700, marginBottom:'10px' }}>
-              {m.icon} {m.label}
-            </div>
-            <div style={{ fontSize:'20px', fontWeight:800, color:m.color||'#F1F5F9', marginBottom:'4px' }}>{m.value}</div>
-            <div style={{ fontSize:'11px', color:'#475569' }}>{m.sub}</div>
-          </div>
-        ))}
-      </div>
-
-      {/* SVM Tone */}
-      <div style={CARD}>
-        <span style={LABEL}>🧠 AI Tone Classifier</span>
-        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr 1fr', gap:'8px' }}>
-          {['NORMAL','HARSH','ANGRY','BRIBE_TONE'].map(l => (
-            <ToneBar key={l} label={l} prob={r.tone_proba?.[l]||0} active={r.tone_label===l}/>
-          ))}
-        </div>
-      </div>
-
-      {/* Voice Acoustics */}
-      {r.eo_detected && ac.avg_pitch_hz > 0 && (
-        <div style={CARD}>
-          <span style={LABEL}>📊 EO Voice Acoustics</span>
-          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:'8px' }}>
-            {[
-              ['Pitch',  `${ac.avg_pitch_hz} Hz`,    ac.avg_pitch_hz > ep*1.55 ? '#EF4444':'#10B981', 'Current pitch'],
-              ['Baseline', `${ep} Hz`,                '#64748B', 'Enrolled pitch'],
-              ['Ratio',  `${ac.pitch_ratio}x`,        ac.pitch_ratio>1.55?'#EF4444':'#10B981', 'Pitch vs normal'],
-              ['Energy', `${ac.avg_energy}`,           ac.avg_energy>0.28?'#EF4444':'#10B981', 'Voice loudness'],
-              ['Loud',   `${ac.loud_duration_sec}s`,   ac.loud_duration_sec>4?'#F59E0B':'#10B981', 'Shouting duration'],
-              ['Agitation', `${ac.agitation}`,         ac.agitation>1.2?'#F59E0B':'#10B981', 'Voice instability'],
-            ].map(([lbl,val,col,desc]) => (
-              <div key={lbl} style={{ background:'#0B0F1A', borderRadius:'10px', padding:'12px', border:'1px solid #1F2937' }}>
-                <div style={{ fontSize:'10px', color:'#475569', marginBottom:'4px', textTransform:'uppercase', letterSpacing:'0.06em', fontWeight:700 }}>{lbl}</div>
-                <div style={{ fontSize:'18px', fontWeight:800, color:col }}>{val}</div>
-                <div style={{ fontSize:'10px', color:'#374151', marginTop:'3px' }}>{desc}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Violations Detail */}
-      <div style={CARD}>
-        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'16px' }}>
-          <span style={LABEL}>🚨 Violations Detected from Voice</span>
-          <span style={{ fontSize:'12px', fontWeight:700, padding:'5px 14px', borderRadius:'10px',
-            background: totalViols > 0 ? 'linear-gradient(135deg, #EF4444, #DC2626)' : 'linear-gradient(135deg, #10B981, #059669)',
-            color:'#fff', boxShadow: totalViols > 0 ? '0 2px 8px rgba(239,68,68,0.3)' : '0 2px 8px rgba(16,185,129,0.3)' }}>
-            {totalViols} found
-          </span>
-        </div>
-        {totalViols > 0 ? (
-          r.violations.map((v,i) => <ViolationCard key={i} v={v} index={i}/>)
-        ) : (
-          <div style={{ textAlign:'center', padding:'28px', color:'#10B981', fontSize:'14px' }}>
-            <div style={{ fontSize:'32px', marginBottom:'10px' }}>✓</div>
-            <div style={{ fontWeight:700 }}>No violations detected</div>
-            <div style={{ fontSize:'12px', color:'#475569', marginTop:'6px' }}>Normal enforcement interaction</div>
-          </div>
-        )}
-      </div>
-
+   
       <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center',
         fontSize:'10px', color:'#374151', letterSpacing:'0.04em', padding:'6px 0' }}>
         <span>{r.officer_name} · {r.timestamp?.slice(0,19).replace('T',' ')}</span>
         <span>ID: {r.incident_id}</span>
       </div>
+    </div>
+  )
+}
+
+const CARD_INNER = { background:'#111827', border:'1px solid #1F2937', borderRadius:'16px', padding:'22px', marginBottom:'14px' }
+
+const SEV_COLOR = {
+  none:     { fg:'#10B981', bg:'rgba(16,185,129,0.12)',  border:'rgba(16,185,129,0.3)' },
+  low:      { fg:'#EAB308', bg:'rgba(234,179,8,0.12)',   border:'rgba(234,179,8,0.3)' },
+  medium:   { fg:'#F97316', bg:'rgba(249,115,22,0.12)',  border:'rgba(249,115,22,0.3)' },
+  high:     { fg:'#EF4444', bg:'rgba(239,68,68,0.12)',   border:'rgba(239,68,68,0.3)' },
+  critical: { fg:'#DC2626', bg:'rgba(220,38,38,0.15)',   border:'rgba(220,38,38,0.4)' },
+}
+
+const CLASS_COLOR = {
+  normal:          { fg:'#10B981', label:'NORMAL' },
+  concerning:      { fg:'#EAB308', label:'CONCERNING' },
+  unprofessional:  { fg:'#F97316', label:'UNPROFESSIONAL' },
+  critical:        { fg:'#EF4444', label:'CRITICAL' },
+}
+
+function SevBadge({ severity }) {
+  const s = SEV_COLOR[severity] || SEV_COLOR.none
+  return (
+    <span style={{ fontSize:'10px', fontWeight:700, letterSpacing:'0.06em',
+      textTransform:'uppercase', color:s.fg, background:s.bg,
+      border:`1px solid ${s.border}`, padding:'3px 10px', borderRadius:'8px' }}>
+      {severity || 'none'}
+    </span>
+  )
+}
+
+function CategoryTile({ icon, title, data }) {
+  const detected = !!data?.detected
+  const severity = data?.severity || 'none'
+  const instances = data?.instances || []
+  const count = instances.length
+  return (
+    <div style={{ background:'#0B0F1A', borderRadius:'12px',
+      padding:'14px 16px', border:`1px solid ${detected ? SEV_COLOR[severity]?.border || '#1F2937' : '#1F2937'}` }}>
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'8px' }}>
+        <div style={{ display:'flex', alignItems:'center', gap:'8px' }}>
+          <span style={{ fontSize:'16px' }}>{icon}</span>
+          <span style={{ fontSize:'12px', fontWeight:700, color:'#F1F5F9' }}>{title}</span>
+        </div>
+        {detected && <SevBadge severity={severity}/>}
+      </div>
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+        <span style={{ fontSize:'11px', fontWeight:700,
+          color: detected ? '#EF4444' : '#10B981', letterSpacing:'0.04em' }}>
+          {detected ? '● DETECTED' : '○ NOT DETECTED'}
+        </span>
+        {detected && count > 0 && (
+          <span style={{ fontSize:'10px', color:'#64748B', fontWeight:600 }}>
+            {count} instance{count > 1 ? 's' : ''}
+          </span>
+        )}
+      </div>
+      {detected && instances.length > 0 && (
+        <div style={{ marginTop:'10px', borderTop:'1px solid #1F2937', paddingTop:'10px',
+          display:'flex', flexDirection:'column', gap:'6px', maxHeight:'140px', overflowY:'auto' }}>
+          {instances.slice(0,4).map((inst, i) => (
+            <div key={i} style={{ fontSize:'11px', color:'#94A3B8', lineHeight:1.5 }}>
+              <div style={{ color:'#E2E8F0', fontWeight:600 }}>
+                "{inst.text || inst.statement || inst.description || '—'}"
+              </div>
+              {(inst.translation || inst.reason || inst.type) && (
+                <div style={{ color:'#64748B', marginTop:'2px' }}>
+                  {inst.translation || inst.reason || inst.type}
+                  {inst.timestamp_approx ? ` · ${inst.timestamp_approx}` : ''}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function GeminiAssessment({ assessment, analysis }) {
+  const g = analysis || {}
+  const oa = g.overall_assessment || {}
+  const tr = g.transcription || {}
+  const classification = (oa.classification || '').toLowerCase()
+  const cls = CLASS_COLOR[classification] || { fg:'#8B5CF6', label:(oa.classification || 'ANALYZED').toUpperCase() }
+  const risk = typeof oa.risk_score === 'number' ? oa.risk_score : null
+  const summary = oa.summary || assessment || ''
+  const action = oa.recommended_action || ''
+
+  // Build a plain-text list of which categories Gemini flagged
+  const detectedList = [
+    { key:'vulgar_language',       label:'Vulgar / Abusive Language' },
+    { key:'false_statements',      label:'False or Misleading Statements' },
+    { key:'loud_aggressive_voice', label:'Loud / Aggressive Voice' },
+    { key:'bribery_indicators',    label:'Bribery Indicators' },
+  ]
+    .map(c => ({ ...c, data: g[c.key] }))
+    .filter(c => c.data && c.data.detected)
+
+  return (
+    <div style={{ ...CARD_INNER,
+      background:'linear-gradient(135deg, rgba(139,92,246,0.08), rgba(59,130,246,0.08))',
+      border:'1px solid rgba(139,92,246,0.25)' }}>
+
+      {/* Header */}
+      <div style={{ display:'flex', alignItems:'center', gap:'10px', marginBottom:'16px' }}>
+        <div style={{ width:36, height:36, borderRadius:'10px',
+          background:'linear-gradient(135deg, #8B5CF6, #3B82F6)',
+          display:'flex', alignItems:'center', justifyContent:'center',
+          boxShadow:'0 2px 8px rgba(139,92,246,0.3)' }}>
+          <span style={{ fontSize:'18px' }}>🤖</span>
+        </div>
+        <div style={{ flex:1 }}>
+          <div style={{ fontSize:'14px', fontWeight:800, color:'#10B981', letterSpacing:'-0.01em' }}>
+            Officer Behavior Assessment
+          </div>
+          <div style={{ fontSize:'10px', color:'#64748B', fontWeight:600,
+            letterSpacing:'0.05em', textTransform:'uppercase' }}>
+            Gemini Multimodal Audio Analysis
+          </div>
+        </div>
+        {risk !== null && (
+          <div style={{ textAlign:'right' }}>
+            <div style={{ fontSize:'22px', fontWeight:900, color:cls.fg, lineHeight:1 }}>
+              {risk}<span style={{ fontSize:'11px', color:'#64748B', fontWeight:600 }}>/100</span>
+            </div>
+            <div style={{ fontSize:'10px', fontWeight:700, color:cls.fg,
+              letterSpacing:'0.06em' }}>
+              {cls.label}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Summary + recommended action — light card matching reference design */}
+      {(summary || action || detectedList.length > 0) && (
+        <div style={{ background:'#F8FAF7', borderRadius:'12px', padding:'18px 20px',
+          marginBottom:'14px', border:'1px solid #E5EFE3' }}>
+          <div style={{ display:'flex', alignItems:'center', gap:'8px', marginBottom:'12px' }}>
+            <span style={{ fontSize:'18px' }}>🤖</span>
+            <span style={{ fontSize:'14px', fontWeight:800, color:'#0F7A3E',
+              letterSpacing:'-0.01em' }}>
+              Gemini Assessment
+            </span>
+          </div>
+          {summary && (
+            <div style={{ fontSize:'14px', color:'#1F2937', lineHeight:1.7,
+              marginBottom:'14px' }}>
+              {summary}
+            </div>
+          )}
+
+          {/* Violations Detected — plain text line listing categories Gemini flagged */}
+          {detectedList.length > 0 && (
+            <div style={{ fontSize:'13px', color:'#1F2937', lineHeight:1.7,
+              marginBottom:'14px', background:'#FFF5F5', borderRadius:'8px',
+              padding:'10px 14px', borderLeft:'3px solid #DC2626' }}>
+              <span style={{ color:'#DC2626', fontWeight:800 }}>Violations Detected: </span>
+              The following misconduct categories were identified in this recording —{' '}
+              {detectedList.map((c, i) => (
+                <span key={c.key}>
+                  <strong>{c.label}</strong>
+                  <span style={{ color:'#64748B', fontWeight:600 }}>
+                    {' '}({c.data.severity}, {(c.data.instances || []).length} instance
+                    {(c.data.instances || []).length === 1 ? '' : 's'})
+                  </span>
+                  {i < detectedList.length - 1 ? '; ' : '.'}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {action && (
+            <div style={{ fontSize:'13px', color:'#374151', lineHeight:1.7 }}>
+              <span style={{ color:'#0F7A3E', fontWeight:800 }}>Recommended Action: </span>
+              {action}
+            </div>
+          )}
+          {oa.is_flagged && (
+            <div style={{ marginTop:'12px', display:'inline-block',
+              background:'rgba(239,68,68,0.12)', border:'1px solid rgba(239,68,68,0.3)',
+              color:'#DC2626', fontSize:'10px', fontWeight:700, letterSpacing:'0.08em',
+              padding:'4px 12px', borderRadius:'8px' }}>
+              ⚑ FLAGGED FOR REVIEW
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Transcription */}
+      {tr.full_text && (
+        <div style={{ background:'rgba(11,15,26,0.5)', borderRadius:'10px',
+          padding:'12px 14px', marginBottom:'14px', borderLeft:'3px solid #3B82F6' }}>
+          <div style={{ display:'flex', alignItems:'center', gap:'10px', marginBottom:'8px',
+            flexWrap:'wrap' }}>
+            <span style={{ fontSize:'11px', fontWeight:700, color:'#3B82F6',
+              textTransform:'uppercase', letterSpacing:'0.08em' }}>
+              📝 Gemini Transcription
+            </span>
+            {tr.language && (
+              <span style={{ fontSize:'10px', color:'#94A3B8', fontWeight:600 }}>
+                Language: <span style={{ color:'#E2E8F0' }}>{tr.language}</span>
+              </span>
+            )}
+            {Array.isArray(tr.speakers) && tr.speakers.length > 0 && (
+              <span style={{ fontSize:'10px', color:'#94A3B8', fontWeight:600 }}>
+                Speakers: <span style={{ color:'#E2E8F0' }}>{tr.speakers.join(', ')}</span>
+              </span>
+            )}
+          </div>
+          <div style={{ fontSize:'13px', color:'#F1F5F9', lineHeight:1.8,
+            fontFamily:'Georgia, serif' }}>
+            "{tr.full_text}"
+          </div>
+        </div>
+      )}
+
+      {/* Category tiles */}
+      {analysis && (
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px' }}>
+          <CategoryTile icon="🤬" title="Vulgar Language"    data={g.vulgar_language}/>
+          <CategoryTile icon="🚫" title="False Statements"   data={g.false_statements}/>
+          <CategoryTile icon="📢" title="Aggressive Voice"   data={g.loud_aggressive_voice}/>
+          <CategoryTile icon="💰" title="Bribery Indicators" data={g.bribery_indicators}/>
+        </div>
+      )}
     </div>
   )
 }
