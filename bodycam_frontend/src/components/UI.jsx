@@ -79,6 +79,20 @@ export function ScoreBar({ score, height = 6 }) {
   )
 }
 
+// Plain-English meanings so users understand what each category signals
+export const CATEGORY_MEANING = {
+  RISHWAT:        'The officer asked for or hinted at money / bribe in exchange for favorable treatment.',
+  DHAMKI:         'The officer threatened the civilian with arrest, jail, or harm.',
+  GALI:           'The officer used abusive, vulgar, or derogatory words toward the civilian.',
+  RUDE_BEHAVIOR:  'The officer spoke in a dismissive, disrespectful, or condescending manner.',
+  HARASSMENT:     'The officer personally targeted, intimidated, or pressured the civilian.',
+  GALAT_CHALLAN:  'The officer appears to have issued an incorrect or unjustified fine / challan.',
+  ANGRY_TONE:     'The officer raised their voice, shouted, or spoke with an aggressive tone.',
+  POWER_ABUSE:    'The officer misused their authority or threatened using their official power.',
+  INTIMIDATION:   'The officer tried to scare the civilian through indirect threats or warnings.',
+  UNPROFESSIONAL: 'The officer spoke carelessly, showed bias, or acted without professional conduct.',
+}
+
 export function ViolationCard({ v, index = 0 }) {
   const styles = {
     CRITICAL: { bg:'rgba(239,68,68,0.08)', border:'rgba(239,68,68,0.25)', left:'#EF4444', badge:'#EF4444', text:'#FCA5A5' },
@@ -88,6 +102,9 @@ export function ViolationCard({ v, index = 0 }) {
   }
   const s = styles[v.severity] || styles.LOW
   const cat = CATEGORY_STYLE[v.type] || {}
+  const meaning = CATEGORY_MEANING[v.type] || ''
+  const pct = typeof v.impact_percent === 'number' ? v.impact_percent : v.score
+  const label = v.severity_label || `${v.severity || 'LOW'} ${v.severity_index || ''}`.trim()
   return (
     <div className="fade-in" style={{ background:s.bg, border:`1px solid ${s.border}`,
       borderLeft:`4px solid ${s.left}`, borderRadius:'12px', padding:'16px 18px',
@@ -96,15 +113,36 @@ export function ViolationCard({ v, index = 0 }) {
       <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', gap:'12px' }}>
         <div style={{ flex:1 }}>
           <div style={{ display:'flex', alignItems:'center', gap:'8px', marginBottom:'8px', flexWrap:'wrap' }}>
-            <span style={{ background:s.badge, color:'#fff', fontSize:'9px',
-              fontWeight:700, padding:'3px 8px', borderRadius:'4px',
-              textTransform:'uppercase', letterSpacing:'0.06em' }}>{v.severity}</span>
+            <span style={{ background:'#0B0F1A', color:'#F1F5F9', fontSize:'11px',
+              fontWeight:800, padding:'3px 10px', borderRadius:'6px',
+              border:`1px solid ${s.left}55`, letterSpacing:'0.04em' }}>
+              Violation {index + 1}
+            </span>
+            <span style={{ background:s.badge, color:'#fff', fontSize:'10px',
+              fontWeight:800, padding:'3px 9px', borderRadius:'4px',
+              textTransform:'uppercase', letterSpacing:'0.08em' }}>{label}</span>
             <span style={{ fontSize:'16px' }}>{cat.icon || '●'}</span>
-            <span style={{ fontSize:'13px', fontWeight:700, color:'#F1F5F9' }}>
+            <span style={{ fontSize:'14px', fontWeight:800, color:'#F1F5F9' }}>
               {(v.label || v.type || '').replace(/_/g,' ')}
             </span>
           </div>
+          {meaning && (
+            <div style={{ fontSize:'12px', color:'#CBD5E1', lineHeight:1.6,
+              marginBottom:'6px' }}>
+              <span style={{ color:s.left, fontWeight:700 }}>What this means: </span>
+              {meaning}
+            </div>
+          )}
           <div style={{ fontSize:'12px', color:'#94A3B8', lineHeight:1.6 }}>{v.detail}</div>
+          <div style={{ marginTop:'8px', display:'flex', alignItems:'center', gap:'8px' }}>
+            <div style={{ flex:1, background:'#1F2937', borderRadius:'4px', overflow:'hidden', height:'5px' }}>
+              <div style={{ height:'100%', width:`${Math.min(pct, 100)}%`, background:s.left,
+                borderRadius:'4px', transition:'width 0.7s ease' }}/>
+            </div>
+            <span style={{ fontSize:'10px', fontWeight:700, color:s.left, letterSpacing:'0.04em' }}>
+              {pct}% impact
+            </span>
+          </div>
           {v.keywords_found?.length > 0 && (
             <div style={{ display:'flex', flexWrap:'wrap', gap:'5px', marginTop:'10px' }}>
               {v.keywords_found.map((kw, i) => (
@@ -120,10 +158,69 @@ export function ViolationCard({ v, index = 0 }) {
         </div>
         <div style={{ background:`linear-gradient(135deg, ${s.left}, ${s.left}CC)`, color:'#fff',
           fontSize:'14px', fontWeight:800, padding:'8px 12px', borderRadius:'10px',
-          whiteSpace:'nowrap', minWidth:'48px', textAlign:'center',
+          whiteSpace:'nowrap', minWidth:'56px', textAlign:'center',
           boxShadow:`0 4px 12px ${s.left}40` }}>
           +{v.score}
         </div>
+      </div>
+    </div>
+  )
+}
+
+export function SeverityScale({ totalScore = 0, severity = 'NORMAL', counts = {} }) {
+  const bands = [
+    { key:'NORMAL',   label:'Normal',   range:'0 – 29%',  color:'#10B981', hint:'No action needed' },
+    { key:'WARNING',  label:'Warning',  range:'30 – 69%', color:'#F59E0B', hint:'Flag for supervisor review' },
+    { key:'CRITICAL', label:'Critical', range:'70 – 100%', color:'#EF4444', hint:'Immediate investigation' },
+  ]
+  const pct = Math.max(0, Math.min(100, Number(totalScore) || 0))
+  return (
+    <div style={{ background:'#111827', border:'1px solid #1F2937', borderRadius:'14px',
+      padding:'18px 20px', marginBottom:'14px' }}>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'12px' }}>
+        <span style={{ fontSize:'11px', color:'#64748B', textTransform:'uppercase',
+          letterSpacing:'0.08em', fontWeight:700 }}>
+          🎯 Severity Scale · Total Score
+        </span>
+        <span style={{ fontSize:'13px', fontWeight:800,
+          color: severity === 'CRITICAL' ? '#EF4444' : severity === 'WARNING' ? '#F59E0B' : '#10B981' }}>
+          {pct}% · {severity}
+        </span>
+      </div>
+      <div style={{ position:'relative', height:'10px', borderRadius:'6px', overflow:'hidden',
+        display:'flex', background:'#0B0F1A' }}>
+        <div style={{ width:'30%', background:'#10B981' }}/>
+        <div style={{ width:'40%', background:'#F59E0B' }}/>
+        <div style={{ width:'30%', background:'#EF4444' }}/>
+        <div style={{ position:'absolute', top:'-4px', left:`calc(${pct}% - 9px)`, width:'18px', height:'18px',
+          borderRadius:'50%', background:'#fff', border:'3px solid #0B0F1A',
+          boxShadow:'0 2px 6px rgba(0,0,0,0.4)' }}/>
+      </div>
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:'8px', marginTop:'14px' }}>
+        {bands.map(b => {
+          const active = severity === b.key
+          const count = b.key === 'CRITICAL' ? (counts.CRITICAL || 0)
+            : b.key === 'WARNING' ? ((counts.HIGH || 0) + (counts.MEDIUM || 0))
+            : (counts.LOW || 0)
+          return (
+            <div key={b.key} style={{ background: active ? `${b.color}15` : '#0B0F1A',
+              border:`1px solid ${active ? b.color + '60' : '#1F2937'}`,
+              borderRadius:'10px', padding:'10px 12px' }}>
+              <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'4px' }}>
+                <span style={{ fontSize:'11px', fontWeight:800, color:b.color, letterSpacing:'0.04em' }}>
+                  {b.label}
+                </span>
+                <span style={{ fontSize:'10px', fontWeight:700, color:'#64748B' }}>{b.range}</span>
+              </div>
+              <div style={{ fontSize:'10px', color:'#94A3B8', lineHeight:1.5, marginBottom:'4px' }}>
+                {b.hint}
+              </div>
+              <div style={{ fontSize:'11px', fontWeight:700, color: count > 0 ? b.color : '#475569' }}>
+                {count} violation{count === 1 ? '' : 's'} in this band
+              </div>
+            </div>
+          )
+        })}
       </div>
     </div>
   )
@@ -143,9 +240,11 @@ export function MetricTile({ label, value, sub, color = '#E2E8F0', icon }) {
   )
 }
 
-export function ToneBar({ label, prob, active }) {
+export function ToneBar({ label, prob, percent, active }) {
   const colors = { NORMAL:'#10B981', HARSH:'#EF4444', ANGRY:'#DC2626', BRIBE_TONE:'#F59E0B' }
   const color  = colors[label] || '#64748B'
+  // Prefer the backend-provided integer percent (guaranteed to sum to 100). Fall back to prob.
+  const pct = typeof percent === 'number' ? percent : Math.round((prob || 0) * 100)
   return (
     <div style={{ background: active ? `${color}15` : '#111827',
       border:`1px solid ${active ? `${color}40` : '#1F2937'}`,
@@ -157,11 +256,11 @@ export function ToneBar({ label, prob, active }) {
           {label.replace(/_/g,' ')}
         </span>
         <span style={{ fontSize:'15px', fontWeight:800, color:active ? color : '#475569' }}>
-          {Math.round(prob * 100)}%
+          {pct}%
         </span>
       </div>
       <div style={{ background:'#1F2937', borderRadius:'4px', overflow:'hidden', height:'5px' }}>
-        <div style={{ height:'100%', width:`${prob * 100}%`, background:color,
+        <div style={{ height:'100%', width:`${pct}%`, background:color,
           borderRadius:'4px', transition:'width 0.7s ease',
           boxShadow: active ? `0 0 8px ${color}60` : 'none' }}/>
       </div>

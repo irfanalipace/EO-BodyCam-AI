@@ -22,8 +22,8 @@
   "score_prolonged_loud": 10,
   "score_agitation": 5,
 
-  "warning_score": 25,
-  "critical_score": 50,
+  "warning_score": 30,
+  "critical_score": 70,
 
   "tone_classifier_cv_accuracy": 0.9969,
   "tone_classifier_val_accuracy": 1.0,
@@ -35,9 +35,9 @@
   "whisper_compute_type": "int8",
 
   "severity_levels": {
-    "NORMAL":   {"min_score": 0,  "max_score": 24, "color": "#1D9E75", "action": "No action needed"},
-    "WARNING":  {"min_score": 25, "max_score": 49, "color": "#BA7517", "action": "Flag for supervisor review"},
-    "CRITICAL": {"min_score": 50, "max_score": 100, "color": "#E24B4A", "action": "Immediate investigation required"}
+    "NORMAL":   {"min_score": 0,  "max_score": 29,  "color": "#1D9E75", "action": "No action needed"},
+    "WARNING":  {"min_score": 30, "max_score": 69,  "color": "#BA7517", "action": "Flag for supervisor review"},
+    "CRITICAL": {"min_score": 70, "max_score": 100, "color": "#E24B4A", "action": "Immediate investigation required"}
   },
 
   "violation_keywords": {

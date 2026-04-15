@@ -314,19 +314,126 @@ def _remove_repetitions(text):
     return text
 
 
+def _gemini_upload_file(key, audio_path):
+    """Upload an audio file to Gemini's Files API. Returns the file URI on success, or ''."""
+    import requests
+    try:
+        size = os.path.getsize(audio_path)
+        headers = {
+            "X-Goog-Upload-Protocol": "resumable",
+            "X-Goog-Upload-Command":  "start",
+            "X-Goog-Upload-Header-Content-Length": str(size),
+            "X-Goog-Upload-Header-Content-Type":   "audio/wav",
+            "Content-Type": "application/json",
+        }
+        meta = {"file": {"display_name": os.path.basename(audio_path)}}
+        r = requests.post(
+            f"https://generativelanguage.googleapis.com/upload/v1beta/files?key={key}",
+            headers=headers, json=meta, timeout=30,
+        )
+        if r.status_code != 200:
+            print(f"  [gemini-upload] init failed {r.status_code}: {r.text[:200]}", flush=True)
+            return ""
+        upload_url = r.headers.get("x-goog-upload-url") or r.headers.get("X-Goog-Upload-URL")
+        if not upload_url:
+            print("  [gemini-upload] no upload URL returned", flush=True)
+            return ""
+        with open(audio_path, "rb") as f:
+            data = f.read()
+        r2 = requests.post(
+            upload_url,
+            headers={
+                "Content-Length": str(size),
+                "X-Goog-Upload-Offset":  "0",
+                "X-Goog-Upload-Command": "upload, finalize",
+            },
+            data=data, timeout=180,
+        )
+        if r2.status_code != 200:
+            print(f"  [gemini-upload] upload failed {r2.status_code}: {r2.text[:200]}", flush=True)
+            return ""
+        uri = r2.json().get("file", {}).get("uri", "")
+        print(f"  [gemini-upload] ok uri={uri}", flush=True)
+        return uri
+    except Exception as e:
+        print(f"  [gemini-upload] exception: {e}", flush=True)
+        return ""
+
+
+def _gemini_transcribe_via_file(key, file_uri):
+    """Run the two transcription prompts against an already-uploaded Gemini file URI."""
+    import requests
+    urdu_text, english_text = "", ""
+    urdu_prompt = (
+        "You are a Pakistani Urdu transcription expert. "
+        "Transcribe this audio EXACTLY ONCE in Urdu script. "
+        "Do not repeat phrases. If unsure, transcribe once only. "
+        "Return ONLY the transcription — no explanations."
+    )
+    english_prompt = (
+        "Translate this audio to Roman Urdu / English. "
+        "Write Urdu words in Roman letters. Do not repeat phrases. "
+        "Return ONLY the transliteration."
+    )
+    for label, ptext, target in [("ur", urdu_prompt, "urdu"), ("en", english_prompt, "english")]:
+        try:
+            payload = {
+                "contents": [{"parts": [
+                    {"text": ptext},
+                    {"file_data": {"mime_type": "audio/wav", "file_uri": file_uri}}
+                ]}],
+                "generationConfig": {"temperature": 0.0, "maxOutputTokens": 2000, "topK": 1, "topP": 0.1},
+            }
+            r = requests.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={key}",
+                json=payload, timeout=120,
+            )
+            if r.status_code != 200:
+                print(f"  [gemini-{label}-file] http {r.status_code}: {r.text[:200]}", flush=True)
+                continue
+            txt = r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+            cleaned = _remove_repetitions(txt)
+            if _detect_hallucination(cleaned):
+                cleaned = _clean_hallucination(cleaned)
+            if target == "urdu":
+                urdu_text = cleaned
+            else:
+                english_text = cleaned
+            print(f"  [gemini-{label}-file] {cleaned[:150]}", flush=True)
+        except Exception as e:
+            print(f"  [gemini-{label}-file] error: {e}", flush=True)
+    return urdu_text, english_text
+
+
 def _gemini_transcribe(audio_path):
     """Transcribe via Google Gemini 2.5 Flash — excellent Urdu/Punjabi/English support.
 
     Returns tuple: (urdu_text, english_translation)
     """
     import requests, base64
-    key = os.environ.get("GEMINI_API_KEY", "")
+    key = os.environ.get("GEMINI_API_KEY", "").strip()
     if not key:
+        print("  [gemini-transcribe] GEMINI_API_KEY not set — skipping Gemini, will fallback", flush=True)
+        return "", ""
+    if not key.startswith("AIza"):
+        print(f"  [gemini-transcribe] key has wrong format ('{key[:6]}...') — must start with 'AIza'", flush=True)
         return "", ""
 
     try:
         with open(audio_path, "rb") as f:
-            audio_b64 = base64.b64encode(f.read()).decode("utf-8")
+            raw = f.read()
+        # Gemini inline_data hard limit is 20MB (base64). WAV at 16kHz float32 for 5 min = ~19MB,
+        # base64 pushes it over. Cap the audio so we stay comfortably under.
+        size_mb = len(raw) / (1024 * 1024)
+        if size_mb > 14:
+            print(f"  [gemini-transcribe] audio {size_mb:.1f}MB exceeds inline limit — using Files API upload", flush=True)
+            uploaded_uri = _gemini_upload_file(key, audio_path)
+            if uploaded_uri:
+                return _gemini_transcribe_via_file(key, uploaded_uri)
+            print(f"  [gemini-transcribe] file upload failed, returning empty", flush=True)
+            return "", ""
+        audio_b64 = base64.b64encode(raw).decode("utf-8")
+        print(f"  [gemini-transcribe] sending {size_mb:.2f}MB audio (inline) to Gemini", flush=True)
     except Exception as e:
         print(f"  Gemini file read error: {e}", flush=True)
         return "", ""
@@ -787,6 +894,9 @@ def auto_transcribe(audio, sample_rate=SR):
         if gemini_ur:
             urdu_transcript = gemini_ur
             method = "gemini_2.5_flash"
+            print(f"  ✓ Gemini transcription SUCCESS ({len(gemini_ur)} chars) — skipping fallbacks", flush=True)
+        else:
+            print(f"  ✗ Gemini transcription returned empty — will try Google Speech fallback", flush=True)
         if gemini_en:
             english_extra = gemini_en
 
@@ -1207,7 +1317,7 @@ def analyze_tone(eo_audio, sr):
     tone_viols = []
 
     if len(eo_audio) < sr * 0.3:
-        return "NORMAL", tone_proba, acoustics, 0, []
+        return "NORMAL", tone_proba, acoustics, 0, [], {"NORMAL": 100, "HARSH": 0, "ANGRY": 0, "BRIBE_TONE": 0}
 
     # ── RAW energy (DO NOT normalize — this measures actual loudness) ──
     raw_rms = float(np.sqrt(np.mean(eo_audio ** 2)))
@@ -1404,10 +1514,32 @@ def analyze_tone(eo_audio, sr):
                       "ANGRY": round(anger_score * 0.3, 3),
                       "BRIBE_TONE": round(bribe_score * 0.3, 3)}
 
-    print(f"  Tone result: label={tone_label} score={tone_score} "
-          f"anger={anger_score:.2f} harsh={harsh_score:.2f} bribe={bribe_score:.2f}", flush=True)
+    # Normalize so the four probabilities always sum to exactly 100% using the
+    # largest-remainder (Hamilton) method — this guarantees integer percents
+    # summing to exactly 100 even after rounding.
+    _total = sum(max(0.0, float(v)) for v in tone_proba.values())
+    if _total > 0:
+        norm = {k: max(0.0, float(v)) / _total for k, v in tone_proba.items()}
+        exact = {k: norm[k] * 100.0 for k in norm}
+        floors = {k: int(exact[k]) for k in exact}
+        remainder = 100 - sum(floors.values())
+        # Distribute the remaining 1% units to the classes with the largest fractional parts
+        fracs = sorted(exact.items(), key=lambda kv: (exact[kv[0]] - floors[kv[0]]), reverse=True)
+        int_percents = dict(floors)
+        for i in range(remainder):
+            int_percents[fracs[i % len(fracs)][0]] += 1
+        # Write back both: float probabilities (normalized) and integer percents (sum to 100)
+        tone_proba = {k: round(int_percents[k] / 100.0, 4) for k in int_percents}
+        tone_percents = int_percents
+    else:
+        tone_percents = {k: 0 for k in tone_proba}
+        tone_percents["NORMAL"] = 100
 
-    return tone_label, tone_proba, acoustics, min(tone_score, 50), tone_viols
+    print(f"  Tone result: label={tone_label} score={tone_score} "
+          f"anger={anger_score:.2f} harsh={harsh_score:.2f} bribe={bribe_score:.2f} "
+          f"percents={tone_percents} sum={sum(tone_percents.values())}", flush=True)
+
+    return tone_label, tone_proba, acoustics, min(tone_score, 50), tone_viols, tone_percents
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1488,7 +1620,7 @@ def run_analysis(audio, sr, officer_id="EO_001", source="upload", filename=""):
     print(f"  Transcribing ({len(analyze_audio)/sr:.1f}s)...", flush=True)
     transcript, transcription_method = auto_transcribe(analyze_audio, sr)
 
-    tone_label, tone_proba, acoustics, tone_score, tone_viols = analyze_tone(analyze_audio, sr)
+    tone_label, tone_proba, acoustics, tone_score, tone_viols, tone_percents = analyze_tone(analyze_audio, sr)
     kw_score, kw_viols = detect_keywords(transcript)
 
     all_viols   = tone_viols + kw_viols
@@ -1498,6 +1630,25 @@ def run_analysis(audio, sr, officer_id="EO_001", source="upload", filename=""):
         "WARNING"  if total_score >= CONFIG["warning_score"]  else
         "NORMAL"
     )
+
+    # Number violations by severity rank (CRITICAL 1..N, WARNING 1..N, NORMAL 1..N)
+    # and attach a normalized impact_percent (points contributed out of 100)
+    _rank = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
+    all_viols.sort(key=lambda v: (_rank.get((v.get("severity") or "LOW").upper(), 99), -int(v.get("score", 0) or 0)))
+    _sev_counters = {}
+    for v in all_viols:
+        sev = (v.get("severity") or "LOW").upper()
+        _sev_counters[sev] = _sev_counters.get(sev, 0) + 1
+        v["severity_index"] = _sev_counters[sev]
+        v["severity_label"] = f"{sev} {_sev_counters[sev]}"
+        try:
+            v["impact_percent"] = round((int(v.get("score", 0) or 0) / 100.0) * 100, 1)
+        except Exception:
+            v["impact_percent"] = 0.0
+    critical_count = _sev_counters.get("CRITICAL", 0)
+    high_count     = _sev_counters.get("HIGH", 0)
+    medium_count   = _sev_counters.get("MEDIUM", 0)
+    low_count      = _sev_counters.get("LOW", 0)
 
     # Behavior assessment
     behavior = assess_behavior(total_score, severity, tone_label, all_viols, transcript)
@@ -1557,6 +1708,7 @@ def run_analysis(audio, sr, officer_id="EO_001", source="upload", filename=""):
         "transcript_source":    "auto_voice_detection",
         "tone_label":           tone_label,
         "tone_proba":           tone_proba,
+        "tone_percents":        tone_percents,
         "acoustics":            acoustics,
         "violations":           all_viols,
         "tone_score":           tone_score,
@@ -1566,6 +1718,21 @@ def run_analysis(audio, sr, officer_id="EO_001", source="upload", filename=""):
         "behavior_assessment":  behavior,
         "ai_assessment":        ai_assessment,
         "gemini_analysis":      gemini_analysis,
+        "severity_bands":       {
+            "NORMAL":   {"min": 0,  "max": 29,  "label": "Normal (0–29%)"},
+            "WARNING":  {"min": 30, "max": 69,  "label": "Warning (30–69%)"},
+            "CRITICAL": {"min": 70, "max": 100, "label": "Critical (70–100%)"},
+        },
+        "severity_counts":      {
+            "CRITICAL": critical_count,
+            "HIGH":     high_count,
+            "MEDIUM":   medium_count,
+            "LOW":      low_count,
+            "TOTAL":    len(all_viols),
+        },
+        "tone_percent":         int(round((tone_score / 100.0) * 100)),
+        "keyword_percent":      int(round((kw_score / 100.0) * 100)),
+        "total_percent":        int(round(total_score)),
         "alert_required":       severity != "NORMAL",
         "processing_time_sec":  round(time.time() - t0, 2),
     }
@@ -1923,7 +2090,16 @@ if __name__ == "__main__":
     print(f"\n{'='*60}")
     print(f" EO Bodycam AI Server v5.0 — Complete Monitoring System")
     print(f"{'='*60}")
-    gem_status = "ACTIVE" if os.environ.get("GEMINI_API_KEY") else "NOT SET (set GEMINI_API_KEY for best accuracy)"
+    _gk = os.environ.get("GEMINI_API_KEY", "").strip()
+    if not _gk:
+        gem_status = "NOT SET (set GEMINI_API_KEY for best accuracy)"
+    elif not _gk.startswith("AIza"):
+        gem_status = (
+            f"INVALID FORMAT ('{_gk[:6]}...') — Gemini keys must start with 'AIza'. "
+            "Create one at https://aistudio.google.com/app/apikey"
+        )
+    else:
+        gem_status = "ACTIVE"
     print(f" Gemini API:    {gem_status}")
     print(f" Transcription: Gemini 2.5 Flash → Google Speech (fallback) → local whisper-small")
     print(f" Emotions:      {' / '.join(emotions)}")
