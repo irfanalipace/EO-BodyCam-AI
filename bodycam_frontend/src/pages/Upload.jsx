@@ -327,6 +327,7 @@ function ResultPanel({ result: r }) {
             {totalViols} found
           </span>
         </div>
+
         {totalViols > 0 && (
           <div style={{ fontSize:'12px', color:'#94A3B8', marginBottom:'14px', lineHeight:1.6 }}>
             Found <strong style={{ color:'#F1F5F9' }}>{totalViols} violation{totalViols === 1 ? '' : 's'}</strong>,
@@ -402,10 +403,9 @@ function ResultPanel({ result: r }) {
       {(r.ai_assessment || r.gemini_analysis) && (
         <GeminiAssessment assessment={r.ai_assessment} analysis={r.gemini_analysis}/>
       )}
- <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:'10px', marginBottom:'14px' }}>
+ <div style={{ display:'grid',   gridTemplateColumns: 'repeat(2, 1fr)', gap:'10px', marginBottom:'14px' }}>
         {[
           { label:'EO Voice', icon:'👤', value:r.eo_detected?'Detected':'Not found', sub:`similarity: ${r.max_similarity}`, color:r.eo_detected?'#10B981':'#EF4444' },
-          { label:'Duration', icon:'⏱', value:`${r.eo_speaking_sec}s`, sub:`of ${r.total_duration_sec}s total` },
           { label:'Processed', icon:'⚡', value:`${r.processing_time_sec}s`, sub:`${r.speech_segments} speech segments` },
         ].map(m => (
           <div key={m.label} style={{ background:'#111827', border:'1px solid #1F2937', borderRadius:'14px', padding:'16px' }}>
