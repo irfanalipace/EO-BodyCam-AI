@@ -303,6 +303,8 @@ function ResultPanel({ result: r }) {
         </div>
       </div>
 
+
+
    {/* Severity scale — shows the 0-29 / 30-69 / 70-100 bands */}
       <SeverityScale totalScore={r.total_score} severity={sev} counts={r.severity_counts || {}}/>
   {/* SVM Tone */}
@@ -317,38 +319,8 @@ function ResultPanel({ result: r }) {
           ))}
         </div>
       </div>
-      {/* Violations Detail */}
-      <div style={CARD}>
-        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'10px' }}>
-          <span style={LABEL}>🚨 Violations Detected from Voice</span>
-          <span style={{ fontSize:'12px', fontWeight:700, padding:'5px 14px', borderRadius:'10px',
-            background: totalViols > 0 ? 'linear-gradient(135deg, #EF4444, #DC2626)' : 'linear-gradient(135deg, #10B981, #059669)',
-            color:'#fff', boxShadow: totalViols > 0 ? '0 2px 8px rgba(239,68,68,0.3)' : '0 2px 8px rgba(16,185,129,0.3)' }}>
-            {totalViols} found
-          </span>
-        </div>
 
-        {totalViols > 0 && (
-          <div style={{ fontSize:'12px', color:'#94A3B8', marginBottom:'14px', lineHeight:1.6 }}>
-            Found <strong style={{ color:'#F1F5F9' }}>{totalViols} violation{totalViols === 1 ? '' : 's'}</strong>,
-            numbered below in order of severity (Violation 1 is the most severe).
-            Each card shows the violation name, what it means, a short description, its impact percentage,
-            and any keywords detected from the transcript.
-          </div>
-        )}
-        {totalViols > 0 ? (
-          r.violations.map((v,i) => <ViolationCard key={i} v={v} index={i}/>)
-        ) : (
-          <div style={{ textAlign:'center', padding:'28px', color:'#10B981', fontSize:'14px' }}>
-            <div style={{ fontSize:'32px', marginBottom:'10px' }}>✓</div>
-            <div style={{ fontWeight:700 }}>No violations detected</div>
-            <div style={{ fontSize:'12px', color:'#475569', marginTop:'6px' }}>Normal enforcement interaction</div>
-          </div>
-        )}
-      </div>   {/* Key metrics */}
-     
-
-         {/* Transcript */}
+   {/* Transcript */}
       {r.transcript && (
         <div style={CARD}>
           <div style={{ display:'flex', alignItems:'center', gap:'10px', marginBottom:'12px' }}>
@@ -403,6 +375,39 @@ function ResultPanel({ result: r }) {
       {(r.ai_assessment || r.gemini_analysis) && (
         <GeminiAssessment assessment={r.ai_assessment} analysis={r.gemini_analysis}/>
       )}
+
+      {/* Violations Detail */}
+      <div style={CARD}>
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'10px' }}>
+          <span style={LABEL}>🚨 Violations Detected from Voice</span>
+          <span style={{ fontSize:'12px', fontWeight:700, padding:'5px 14px', borderRadius:'10px',
+            background: totalViols > 0 ? 'linear-gradient(135deg, #EF4444, #DC2626)' : 'linear-gradient(135deg, #10B981, #059669)',
+            color:'#fff', boxShadow: totalViols > 0 ? '0 2px 8px rgba(239,68,68,0.3)' : '0 2px 8px rgba(16,185,129,0.3)' }}>
+            {totalViols} found
+          </span>
+        </div>
+
+        {totalViols > 0 && (
+          <div style={{ fontSize:'12px', color:'#94A3B8', marginBottom:'14px', lineHeight:1.6 }}>
+            Found <strong style={{ color:'#F1F5F9' }}>{totalViols} violation{totalViols === 1 ? '' : 's'}</strong>,
+            numbered below in order of severity (Violation 1 is the most severe).
+            Each card shows the violation name, what it means, a short description, its impact percentage,
+            and any keywords detected from the transcript.
+          </div>
+        )}
+        {totalViols > 0 ? (
+          r.violations.map((v,i) => <ViolationCard key={i} v={v} index={i}/>)
+        ) : (
+          <div style={{ textAlign:'center', padding:'28px', color:'#10B981', fontSize:'14px' }}>
+            <div style={{ fontSize:'32px', marginBottom:'10px' }}>✓</div>
+            <div style={{ fontWeight:700 }}>No violations detected</div>
+            <div style={{ fontSize:'12px', color:'#475569', marginTop:'6px' }}>Normal enforcement interaction</div>
+          </div>
+        )}
+      </div>   {/* Key metrics */}
+     
+
+    
  <div style={{ display:'grid',   gridTemplateColumns: 'repeat(2, 1fr)', gap:'10px', marginBottom:'14px' }}>
         {[
           { label:'EO Voice', icon:'👤', value:r.eo_detected?'Detected':'Not found', sub:`similarity: ${r.max_similarity}`, color:r.eo_detected?'#10B981':'#EF4444' },
