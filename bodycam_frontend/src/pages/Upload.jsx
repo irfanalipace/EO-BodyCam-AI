@@ -345,58 +345,9 @@ function ResultPanel({ result: r }) {
           </div>
         )}
       </div>   {/* Key metrics */}
-      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:'10px', marginBottom:'14px' }}>
-        {[
-          { label:'EO Voice', icon:'👤', value:r.eo_detected?'Detected':'Not found', sub:`similarity: ${r.max_similarity}`, color:r.eo_detected?'#10B981':'#EF4444' },
-          { label:'Duration', icon:'⏱', value:`${r.eo_speaking_sec}s`, sub:`of ${r.total_duration_sec}s total` },
-          { label:'Processed', icon:'⚡', value:`${r.processing_time_sec}s`, sub:`${r.speech_segments} speech segments` },
-        ].map(m => (
-          <div key={m.label} style={{ background:'#111827', border:'1px solid #1F2937', borderRadius:'14px', padding:'16px' }}>
-            <div style={{ fontSize:'10px', color:'#64748B', textTransform:'uppercase', letterSpacing:'0.07em', fontWeight:700, marginBottom:'10px' }}>
-              {m.icon} {m.label}
-            </div>
-            <div style={{ fontSize:'20px', fontWeight:800, color:m.color||'#F1F5F9', marginBottom:'4px' }}>{m.value}</div>
-            <div style={{ fontSize:'11px', color:'#475569' }}>{m.sub}</div>
-          </div>
-        ))}
-      </div>
+     
 
-    
-
-      {/* Voice Acoustics */}
-      {r.eo_detected && ac.avg_pitch_hz > 0 && (
-        <div style={CARD}>
-          <span style={LABEL}>📊 EO Voice Acoustics</span>
-          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:'8px' }}>
-            {[
-              ['Pitch',  `${ac.avg_pitch_hz} Hz`,    ac.avg_pitch_hz > ep*1.55 ? '#EF4444':'#10B981', 'Current pitch'],
-              ['Baseline', `${ep} Hz`,                '#64748B', 'Enrolled pitch'],
-              ['Ratio',  `${ac.pitch_ratio}x`,        ac.pitch_ratio>1.55?'#EF4444':'#10B981', 'Pitch vs normal'],
-              ['Energy', `${ac.avg_energy}`,           ac.avg_energy>0.28?'#EF4444':'#10B981', 'Voice loudness'],
-              ['Loud',   `${ac.loud_duration_sec}s`,   ac.loud_duration_sec>4?'#F59E0B':'#10B981', 'Shouting duration'],
-              ['Agitation', `${ac.agitation}`,         ac.agitation>1.2?'#F59E0B':'#10B981', 'Voice instability'],
-            ].map(([lbl,val,col,desc]) => (
-              <div key={lbl} style={{ background:'#0B0F1A', borderRadius:'10px', padding:'12px', border:'1px solid #1F2937' }}>
-                <div style={{ fontSize:'10px', color:'#475569', marginBottom:'4px', textTransform:'uppercase', letterSpacing:'0.06em', fontWeight:700 }}>{lbl}</div>
-                <div style={{ fontSize:'18px', fontWeight:800, color:col }}>{val}</div>
-                <div style={{ fontSize:'10px', color:'#374151', marginTop:'3px' }}>{desc}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-   
-
-      {/* Violation Summary */}
-      {totalViols > 0 && (
-        <div style={CARD}>
-          <span style={LABEL}>Violation Categories Detected</span>
-          <ViolationSummary violations={r.violations}/>
-        </div>
-      )}
-
-      {/* Transcript */}
+         {/* Transcript */}
       {r.transcript && (
         <div style={CARD}>
           <div style={{ display:'flex', alignItems:'center', gap:'10px', marginBottom:'12px' }}>
@@ -451,6 +402,55 @@ function ResultPanel({ result: r }) {
       {(r.ai_assessment || r.gemini_analysis) && (
         <GeminiAssessment assessment={r.ai_assessment} analysis={r.gemini_analysis}/>
       )}
+ <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:'10px', marginBottom:'14px' }}>
+        {[
+          { label:'EO Voice', icon:'👤', value:r.eo_detected?'Detected':'Not found', sub:`similarity: ${r.max_similarity}`, color:r.eo_detected?'#10B981':'#EF4444' },
+          { label:'Duration', icon:'⏱', value:`${r.eo_speaking_sec}s`, sub:`of ${r.total_duration_sec}s total` },
+          { label:'Processed', icon:'⚡', value:`${r.processing_time_sec}s`, sub:`${r.speech_segments} speech segments` },
+        ].map(m => (
+          <div key={m.label} style={{ background:'#111827', border:'1px solid #1F2937', borderRadius:'14px', padding:'16px' }}>
+            <div style={{ fontSize:'10px', color:'#64748B', textTransform:'uppercase', letterSpacing:'0.07em', fontWeight:700, marginBottom:'10px' }}>
+              {m.icon} {m.label}
+            </div>
+            <div style={{ fontSize:'20px', fontWeight:800, color:m.color||'#F1F5F9', marginBottom:'4px' }}>{m.value}</div>
+            <div style={{ fontSize:'11px', color:'#475569' }}>{m.sub}</div>
+          </div>
+        ))}
+      </div>
+      {/* Voice Acoustics */}
+      {r.eo_detected && ac.avg_pitch_hz > 0 && (
+        <div style={CARD}>
+          <span style={LABEL}>📊 EO Voice Acoustics</span>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:'8px' }}>
+            {[
+              ['Pitch',  `${ac.avg_pitch_hz} Hz`,    ac.avg_pitch_hz > ep*1.55 ? '#EF4444':'#10B981', 'Current pitch'],
+              ['Baseline', `${ep} Hz`,                '#64748B', 'Enrolled pitch'],
+              ['Ratio',  `${ac.pitch_ratio}x`,        ac.pitch_ratio>1.55?'#EF4444':'#10B981', 'Pitch vs normal'],
+              ['Energy', `${ac.avg_energy}`,           ac.avg_energy>0.28?'#EF4444':'#10B981', 'Voice loudness'],
+              ['Loud',   `${ac.loud_duration_sec}s`,   ac.loud_duration_sec>4?'#F59E0B':'#10B981', 'Shouting duration'],
+              ['Agitation', `${ac.agitation}`,         ac.agitation>1.2?'#F59E0B':'#10B981', 'Voice instability'],
+            ].map(([lbl,val,col,desc]) => (
+              <div key={lbl} style={{ background:'#0B0F1A', borderRadius:'10px', padding:'12px', border:'1px solid #1F2937' }}>
+                <div style={{ fontSize:'10px', color:'#475569', marginBottom:'4px', textTransform:'uppercase', letterSpacing:'0.06em', fontWeight:700 }}>{lbl}</div>
+                <div style={{ fontSize:'18px', fontWeight:800, color:col }}>{val}</div>
+                <div style={{ fontSize:'10px', color:'#374151', marginTop:'3px' }}>{desc}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+   
+
+      {/* Violation Summary */}
+      {totalViols > 0 && (
+        <div style={CARD}>
+          <span style={LABEL}>Violation Categories Detected</span>
+          <ViolationSummary violations={r.violations}/>
+        </div>
+      )}
+
+ 
 
    
       <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center',
@@ -599,7 +599,7 @@ function GeminiAssessment({ assessment, analysis }) {
           <span style={{ fontSize:'18px' }}>🤖</span>
           <span style={{ fontSize:'14px', fontWeight:800, color:'#0F7A3E',
             letterSpacing:'-0.01em' }}>
-            Gemini Assessment
+             Assessment
           </span>
         </div>
 
