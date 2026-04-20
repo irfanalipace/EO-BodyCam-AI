@@ -6,7 +6,7 @@ const CARD  = { background:'#111827', border:'1px solid #1F2937', borderRadius:'
 const LABEL = { fontSize:'10px', color:'#64748B', textTransform:'uppercase', letterSpacing:'0.08em', fontWeight:700, marginBottom:'10px', display:'block' }
 
 const OFFICERS = [
-  { id:'EO_001', name:'Ali Hassan — PK-LHR-001' },
+  { id:'EO_001', name:'Irfan Ali — PK-LHR-001' },
   { id:'EO_002', name:'Umar Farooq — PK-LHR-002' },
   { id:'EO_003', name:'Fatima Malik — PK-KHI-001' },
 ]
@@ -14,10 +14,13 @@ const OFFICERS = [
 const PROGRESS_STEPS = [
   'Removing background noise...',
   'Identifying EO voice...',
+  'Detecting officer greeting...',
   'Transcribing Urdu speech...',
   'Scanning for violation keywords...',
   'Calculating violation score...',
 ]
+
+const GREETING_EXAMPLE = "Assalam Alaikum, mera naam [Name] hai, mein [Station] enforcement station se aaya hoon"
 
 const KW_GROUPS = [
   { type:'RISHWAT',        icon:'💰', color:'#EF4444', words:['rishwat','paisa','deal','chhod do','chai paani','haath garam'] },
@@ -126,13 +129,50 @@ export default function Upload() {
             </select>
           </div>
 
+          {/* Greeting Protocol */}
+          <div style={{ ...CARD, background:'linear-gradient(135deg, rgba(16,185,129,0.06), rgba(59,130,246,0.06))',
+            border:'1px solid rgba(16,185,129,0.2)' }}>
+            <span style={LABEL}>EO Greeting Protocol (Required)</span>
+            <div style={{ background:'#0B0F1A', borderRadius:'10px', padding:'14px 16px',
+              border:'1px solid #1F2937', marginBottom:'12px' }}>
+              <div style={{ fontSize:'11px', color:'#10B981', fontWeight:700, marginBottom:'8px',
+                letterSpacing:'0.06em', textTransform:'uppercase' }}>
+                Suggested Greeting
+              </div>
+              <div style={{ fontSize:'13px', color:'#F1F5F9', lineHeight:1.8,
+                fontStyle:'italic', direction:'ltr' }}>
+                "{GREETING_EXAMPLE}"
+              </div>
+            </div>
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'6px' }}>
+              {[
+                { icon:'🤝', label:'Salam', pts:'25 pts', desc:'Assalam Alaikum', color:'#10B981' },
+                { icon:'👤', label:'Name', pts:'30 pts', desc:'Mera naam [Name] hai', color:'#3B82F6' },
+                { icon:'🏢', label:'Station', pts:'25 pts', desc:'[Station] se aaya hoon', color:'#8B5CF6' },
+                { icon:'🪪', label:'Role', pts:'20 pts', desc:'Enforcement Officer', color:'#F59E0B' },
+              ].map(g => (
+                <div key={g.label} style={{ background:'#111827', borderRadius:'8px', padding:'10px',
+                  border:'1px solid #1F2937' }}>
+                  <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'4px' }}>
+                    <span style={{ fontSize:'11px', fontWeight:700, color:g.color }}>
+                      {g.icon} {g.label}
+                    </span>
+                    <span style={{ fontSize:'9px', color:'#475569', fontWeight:600 }}>{g.pts}</span>
+                  </div>
+                  <div style={{ fontSize:'10px', color:'#64748B' }}>{g.desc}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
           {/* How it works */}
           <div style={{ ...CARD, background:'#0B0F1A', border:'1px solid #1F2937' }}>
             <span style={LABEL}>AI Detection Pipeline</span>
             {[
               { icon:'🎙', color:'#3B82F6', title:'Noise Removal',       desc:'Strips traffic, animals, crowd noise' },
               { icon:'👤', color:'#8B5CF6', title:'EO Voice Detection',  desc:'Finds officer voice among all speakers' },
-              { icon:'🌐', color:'#10B981', title:'Urdu Transcription',  desc:'Groq Whisper converts speech to text' },
+              { icon:'🤝', color:'#10B981', title:'Greeting Detection',  desc:'Detects officer self-introduction (Salam + Name + Station)' },
+              { icon:'🌐', color:'#10B981', title:'Urdu Transcription',  desc:'Gemini / Whisper converts speech to text' },
               { icon:'🧠', color:'#F59E0B', title:'Tone Analysis',       desc:'Detects shouting, pitch, agitation (SVM)' },
               { icon:'🔍', color:'#EF4444', title:'Keyword Detection',   desc:'588 keywords in 10 violation categories' },
             ].map(s => (
@@ -307,6 +347,10 @@ function ResultPanel({ result: r }) {
 
    {/* Severity scale — shows the 0-29 / 30-69 / 70-100 bands */}
       <SeverityScale totalScore={r.total_score} severity={sev} counts={r.severity_counts || {}}/>
+
+  {/* EO Greeting Detection */}
+      {<GreetingPanel greeting={r.greeting}/>}
+
   {/* SVM Tone */}
       <div style={CARD}>
         <span style={LABEL}>🧠 AI Tone Classifier</span>
@@ -657,6 +701,161 @@ function GeminiAssessment({ assessment, analysis }) {
           <CategoryTile icon="🚫" title="False Statements"   data={g.false_statements}/>
           <CategoryTile icon="📢" title="Aggressive Voice"   data={g.loud_aggressive_voice}/>
           <CategoryTile icon="💰" title="Bribery Indicators" data={g.bribery_indicators}/>
+        </div>
+      )}
+    </div>
+  )
+}
+
+
+function GreetingPanel({ greeting }) {
+  if (!greeting) return null
+  const g = greeting
+  const complianceColor = g.greeting_compliance === 'FULL' ? '#10B981'
+    : g.greeting_compliance === 'PARTIAL' ? '#F59E0B' : '#EF4444'
+  const complianceBg = g.greeting_compliance === 'FULL' ? 'rgba(16,185,129,0.08)'
+    : g.greeting_compliance === 'PARTIAL' ? 'rgba(245,158,11,0.08)' : 'rgba(239,68,68,0.08)'
+  const complianceBorder = g.greeting_compliance === 'FULL' ? 'rgba(16,185,129,0.25)'
+    : g.greeting_compliance === 'PARTIAL' ? 'rgba(245,158,11,0.25)' : 'rgba(239,68,68,0.25)'
+
+  const checkItems = [
+    { key:'salam_found',       label:'Salam (Greeting)',       icon:'🤝', pts: g.greeting_score_breakdown?.salam || 0 },
+    { key:'name_introduced',   label:'Officer Name',           icon:'👤', pts: g.greeting_score_breakdown?.name || 0 },
+    { key:'station_mentioned', label:'Station / Area',         icon:'🏢', pts: g.greeting_score_breakdown?.station || 0 },
+    { key:'role_mentioned',    label:'Role / Designation',     icon:'🪪', pts: g.greeting_score_breakdown?.role || 0 },
+  ]
+
+  return (
+    <div style={{ background: complianceBg, border:`1px solid ${complianceBorder}`,
+      borderRadius:'16px', padding:'22px', marginBottom:'14px' }}>
+
+      {/* Header */}
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'16px' }}>
+        <div style={{ display:'flex', alignItems:'center', gap:'12px' }}>
+          <div style={{ width:40, height:40, borderRadius:'10px',
+            background:`linear-gradient(135deg, ${complianceColor}, ${complianceColor}88)`,
+            display:'flex', alignItems:'center', justifyContent:'center',
+            boxShadow:`0 2px 8px ${complianceColor}40` }}>
+            <span style={{ fontSize:'20px' }}>🤝</span>
+          </div>
+          <div>
+            <div style={{ fontSize:'15px', fontWeight:800, color:complianceColor, letterSpacing:'-0.01em' }}>
+              EO Greeting Detection
+            </div>
+            <div style={{ fontSize:'10px', color:'#64748B', fontWeight:600,
+              letterSpacing:'0.07em', textTransform:'uppercase' }}>
+              Officer Self-Identification Protocol
+            </div>
+          </div>
+        </div>
+
+        {/* Compliance Badge */}
+        <div style={{ textAlign:'right' }}>
+          <div style={{ fontSize:'24px', fontWeight:900, color:complianceColor, lineHeight:1 }}>
+            {g.greeting_score}<span style={{ fontSize:'12px', color:'#64748B', fontWeight:600 }}>/100</span>
+          </div>
+          <div style={{ fontSize:'10px', fontWeight:800, color:complianceColor,
+            letterSpacing:'0.08em', marginTop:'2px', textTransform:'uppercase' }}>
+            {g.greeting_compliance === 'FULL' ? 'Full Compliance' :
+             g.greeting_compliance === 'PARTIAL' ? 'Partial' : 'No Greeting'}
+          </div>
+        </div>
+      </div>
+
+      {/* Checklist — 4 components */}
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px', marginBottom:'14px' }}>
+        {checkItems.map(item => {
+          const found = g[item.key]
+          return (
+            <div key={item.key} style={{ background:'#111827', borderRadius:'10px', padding:'12px 14px',
+              border:`1px solid ${found ? 'rgba(16,185,129,0.3)' : 'rgba(239,68,68,0.2)'}` }}>
+              <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+                <div style={{ display:'flex', alignItems:'center', gap:'8px' }}>
+                  <span style={{ fontSize:'14px' }}>{item.icon}</span>
+                  <span style={{ fontSize:'11px', fontWeight:700, color:'#E2E8F0' }}>{item.label}</span>
+                </div>
+                <span style={{ fontSize:'16px', fontWeight:800, color: found ? '#10B981' : '#EF4444' }}>
+                  {found ? '✓' : '✗'}
+                </span>
+              </div>
+              <div style={{ fontSize:'10px', color: found ? '#10B981' : '#EF4444', fontWeight:600, marginTop:'4px' }}>
+                {found ? `+${item.pts} points` : '0 points — missing'}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+
+      {/* Extracted Info */}
+      {(g.extracted_name || g.extracted_station || g.matched_officer_name) && (
+        <div style={{ background:'#0B0F1A', borderRadius:'12px', padding:'14px 16px',
+          border:'1px solid #1F2937', marginBottom:'14px' }}>
+          <div style={{ fontSize:'10px', color:'#64748B', fontWeight:700, textTransform:'uppercase',
+            letterSpacing:'0.08em', marginBottom:'10px' }}>Extracted from Voice</div>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:'10px' }}>
+            {g.extracted_name && (
+              <div>
+                <div style={{ fontSize:'10px', color:'#475569', marginBottom:'2px' }}>Officer Name</div>
+                <div style={{ fontSize:'14px', fontWeight:800, color:'#3B82F6' }}>{g.extracted_name}</div>
+              </div>
+            )}
+            {g.extracted_station && (
+              <div>
+                <div style={{ fontSize:'10px', color:'#475569', marginBottom:'2px' }}>Station / Area</div>
+                <div style={{ fontSize:'14px', fontWeight:800, color:'#8B5CF6' }}>{g.extracted_station}</div>
+              </div>
+            )}
+            {g.matched_officer_name && (
+              <div>
+                <div style={{ fontSize:'10px', color:'#475569', marginBottom:'2px' }}>Matched Officer</div>
+                <div style={{ fontSize:'14px', fontWeight:800, color:'#10B981' }}>
+                  {g.matched_officer_name}
+                  {g.matched_officer_id && <span style={{ fontSize:'10px', color:'#64748B' }}> ({g.matched_officer_id})</span>}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Identification Method */}
+      {g.identification_method && (
+        <div style={{ display:'flex', alignItems:'center', gap:'8px', marginBottom:'14px' }}>
+          <span style={{ fontSize:'10px', color:'#64748B', fontWeight:700, textTransform:'uppercase',
+            letterSpacing:'0.06em' }}>ID Method:</span>
+          <span style={{ fontSize:'11px', fontWeight:700, color:'#E2E8F0',
+            background:'rgba(59,130,246,0.12)', padding:'4px 12px', borderRadius:'8px',
+            border:'1px solid rgba(59,130,246,0.25)' }}>
+            {g.identification_method}
+          </span>
+        </div>
+      )}
+
+      {/* Greeting Text */}
+      {g.greeting_text && (
+        <div style={{ background:'#0B0F1A', borderRadius:'10px', padding:'12px 16px',
+          borderLeft:`4px solid ${complianceColor}`, marginBottom:'14px' }}>
+          <div style={{ fontSize:'10px', color:'#64748B', fontWeight:700, marginBottom:'6px',
+            textTransform:'uppercase', letterSpacing:'0.06em' }}>Greeting Detected</div>
+          <div style={{ fontSize:'13px', color:'#F1F5F9', lineHeight:1.7, fontStyle:'italic' }}>
+            "{g.greeting_text}"
+          </div>
+        </div>
+      )}
+
+      {/* Suggestions */}
+      {g.suggestions && g.suggestions.length > 0 && (
+        <div style={{ background:'rgba(245,158,11,0.08)', borderRadius:'10px', padding:'12px 16px',
+          border:'1px solid rgba(245,158,11,0.2)' }}>
+          <div style={{ fontSize:'10px', color:'#F59E0B', fontWeight:700, marginBottom:'8px',
+            textTransform:'uppercase', letterSpacing:'0.06em' }}>Improvement Suggestions</div>
+          {g.suggestions.map((s, i) => (
+            <div key={i} style={{ fontSize:'12px', color:'#E2E8F0', marginBottom:'4px',
+              display:'flex', gap:'8px', alignItems:'flex-start' }}>
+              <span style={{ color:'#F59E0B', fontWeight:700, flexShrink:0 }}>•</span>
+              <span>{s}</span>
+            </div>
+          ))}
         </div>
       )}
     </div>

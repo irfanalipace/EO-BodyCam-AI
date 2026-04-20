@@ -67,7 +67,7 @@ export default function LiveStream({ liveStatus }) {
             <div style={{ marginBottom:'12px' }}>
               <label style={LABEL}>Officer</label>
               <select value={officerId} onChange={e => setOfficerId(e.target.value)} disabled={streaming}>
-                <option value="EO_001">Ali Hassan — EO_001</option>
+                <option value="EO_001">Irfan Ali — EO_001</option>
                 <option value="EO_002">Umar Farooq — EO_002</option>
                 <option value="EO_003">Fatima Malik — EO_003</option>
               </select>

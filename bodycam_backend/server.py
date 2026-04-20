@@ -84,7 +84,7 @@ print(f"Thresholds: warning={CONFIG['warning_score']} critical={CONFIG['critical
 print(f"Keywords: {kw_total} Urdu words in {len(VK)} categories", flush=True)
 
 OFFICERS = {
-    "EO_001": {"name": "Ali Hassan",    "badge": "PK-LHR-001", "enrolled": True,  "area": "Lahore - Anarkali"},
+    "EO_001": {"name": "Irfan Ali",     "badge": "PK-LHR-001", "enrolled": True,  "area": "Lahore - Modal Town"},
     "EO_002": {"name": "Umar Farooq",   "badge": "PK-LHR-002", "enrolled": False, "area": "Lahore - Model Town"},
     "EO_003": {"name": "Fatima Malik",   "badge": "PK-KHI-001", "enrolled": False, "area": "Karachi - Saddar"},
 }
@@ -415,8 +415,8 @@ def _gemini_transcribe(audio_path):
     if not key:
         print("  [gemini-transcribe] GEMINI_API_KEY not set — skipping Gemini, will fallback", flush=True)
         return "", ""
-    if not key.startswith("AIza"):
-        print(f"  [gemini-transcribe] key has wrong format ('{key[:6]}...') — must start with 'AIza'", flush=True)
+    if len(key) < 10:
+        print(f"  [gemini-transcribe] key too short ('{key[:6]}...') — check GEMINI_API_KEY", flush=True)
         return "", ""
 
     try:
@@ -466,11 +466,21 @@ def _gemini_transcribe(audio_path):
                 "topP": 0.1,
             }
         }
-        resp = requests.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={key}",
-            json=payload, timeout=90
-        )
-        if resp.status_code == 200:
+        resp = None
+        for _attempt in range(3):
+            resp = requests.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={key}",
+                json=payload, timeout=90
+            )
+            if resp.status_code == 200:
+                break
+            if resp.status_code in (429, 503):
+                import time as _t
+                _t.sleep(2 + _attempt * 3)
+                print(f"  [gemini-ur] retry {_attempt+1}/3 (status {resp.status_code})", flush=True)
+                continue
+            break
+        if resp and resp.status_code == 200:
             try:
                 text = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
                 if text and len(text) > 1:
@@ -510,11 +520,21 @@ def _gemini_transcribe(audio_path):
                     "topP": 0.1,
                 }
             }
-            resp = requests.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={key}",
-                json=payload, timeout=90
-            )
-            if resp.status_code == 200:
+            resp = None
+            for _attempt in range(3):
+                resp = requests.post(
+                    f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={key}",
+                    json=payload, timeout=90
+                )
+                if resp.status_code == 200:
+                    break
+                if resp.status_code in (429, 503):
+                    import time as _t
+                    _t.sleep(2 + _attempt * 3)
+                    print(f"  [gemini-en] retry {_attempt+1}/3 (status {resp.status_code})", flush=True)
+                    continue
+                break
+            if resp and resp.status_code == 200:
                 try:
                     text = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
                     if text and len(text) > 1:
@@ -1174,6 +1194,25 @@ def transliterate_urdu_to_roman(text):
         "\u067e\u06cc\u0633\u06d2 \u062f\u06d2": "paisay de",
         "\u067e\u06cc\u0633\u06d2 \u0644\u0627\u0624": "paisay lao",
         "\u067e\u06cc\u0633\u06d2 \u0646\u06a9\u0627\u0644\u0648": "paisay nikalo",
+        # Greeting-related (for greeting detection)
+        "السلام علیکم": "assalam alaikum",
+        "وعلیکم السلام": "walaikum assalam",
+        "علیکم السلام": "alaikum assalam",
+        "میرا نام": "mera naam",
+        "میں ہوں": "mein hoon",
+        "نام ہے": "naam hai",
+        "سٹیشن سے": "station se",
+        "سٹیشن": "station",
+        "تھانے سے": "thane se",
+        "سے آیا ہوں": "se aaya hoon",
+        "آیا ہوں": "aaya hoon",
+        "انفورسمنٹ آفیسر": "enforcement officer",
+        "انفورسمنٹ": "enforcement",
+        "آفیسر": "officer",
+        "افیسر": "officer",
+        "افسر": "officer",
+        "ٹریفک وارڈن": "traffic warden",
+        "وارڈن": "warden",
     }
     result = text
     for urdu, roman in sorted(mapping.items(), key=lambda x: -len(x[0])):
@@ -1212,6 +1251,223 @@ def normalize_roman_spelling(text):
     for w in words:
         normalized.append(SPELLING_VARIANTS.get(w, w))
     return " ".join(normalized)
+
+
+# ═══════════════════════════════════════════════════════════════
+#  EO GREETING DETECTION — Identifies officer from spoken greeting
+# ═══════════════════════════════════════════════════════════════
+# Standard greeting patterns officers should use before interactions
+EO_GREETING_TEMPLATES = [
+    "Assalam Alaikum, mera naam {name} hai, mein {station} enforcement station se aaya hoon",
+    "Assalam Alaikum, mera naam {name} hai aur mein {station} se hoon",
+    "Assalam Alaikum, mein {name} hoon, {station} enforcement officer",
+    "Assalam Alaikum, mein enforcement officer {name}, {station} area",
+    "Assalam Alaikum, Traffic Warden {name}, {station} station",
+]
+
+# Greeting detection keywords (Urdu + Roman + English)
+GREETING_MARKERS = {
+    "salam": [
+        "assalam alaikum", "asslam alikum", "assalamu alaikum", "salam alaikum",
+        "aslam o alikum", "asalam alekum", "slam alaikum", "salam",
+        "assalam o alaikum", "assalam u alaikum", "assalamoalaikum",
+        "as salam alaikum", "aslam alaikum", "aslam alikum",
+        "assalam walaikum", "salam walaikum", "assalamualaikum",
+        "assalam aleykum", "assalam alikum", "a salam alaikum",
+        "alsalam alaikum", "alsalamu alaikum",
+        "السلام علیکم", "اسلام علیکم", "سلام", "السلام و علیکم",
+        "وعلیکم السلام", "علیکم السلام", "و علیکم السلام",
+        "walaikum assalam", "walaikum salam", "wa alaikum assalam",
+        "walekum salam", "walaikum as salam",
+    ],
+    "introduction": [
+        "mera naam", "mera name", "mein hoon", "main hoon", "mei hoon",
+        "mein hun", "main hun", "my name", "i am",
+        "mera nam", "naam hai", "name hai", "naam h", "name h",
+        "naam ha", "name ha", "mein hon", "main hon",
+        "میرا نام", "میں ہوں", "نام ہے",
+    ],
+    "station": [
+        "station se", "station say", "station sy", "thane se", "thana se",
+        "area se", "area say", "enforcement station", "enforcement office",
+        "se aaya hoon", "say aya hon", "se aya hoon", "sy aya hon",
+        "se aya hon", "say aaya hoon", "say aaya hon", "se aaya hon",
+        "se aya hun", "say aya hun", "sy aya hoon", "sy aaya hoon",
+        "stations se", "stations say", "stations sy",
+        "station sey", "stations sey",
+        "se aya hu", "say aya hu", "se aaya hu",
+        "سٹیشن سے", "تھانے سے", "سے آیا ہوں", "ایریا سے",
+        "سے آیا ہوں", "سٹیشنز سے",
+    ],
+    "role": [
+        "enforcement officer", "traffic warden", "warden", "officer",
+        "eo", "traffic officer", "enforcement",
+        "انفورسمنٹ آفیسر", "ٹریفک وارڈن", "وارڈن", "آفیسر", "انفورسمنٹ",
+        "افیسر", "افسر", "آفسر",
+    ],
+}
+
+def detect_eo_greeting(transcript):
+    """Detect officer self-identification greeting from transcript.
+
+    Looks for patterns like:
+      'Assalam Alaikum, mera naam Irfan Ali hai, mein Modal Town enforcement station se aaya hoon'
+
+    Returns:
+      dict with greeting detection results:
+        - greeting_detected (bool)
+        - salam_found (bool)
+        - name_introduced (bool)
+        - station_mentioned (bool)
+        - role_mentioned (bool)
+        - extracted_name (str or None)
+        - extracted_station (str or None)
+        - matched_officer_id (str or None)
+        - matched_officer_name (str or None)
+        - greeting_text (str) - the part of transcript identified as greeting
+        - greeting_score (int) - 0-100 how complete the greeting is
+        - greeting_compliance (str) - FULL / PARTIAL / MISSING
+        - suggestions (list) - what was missing from the greeting
+    """
+    if not transcript:
+        return {
+            "greeting_detected": False, "salam_found": False,
+            "name_introduced": False, "station_mentioned": False,
+            "role_mentioned": False, "extracted_name": None,
+            "extracted_station": None, "matched_officer_id": None,
+            "matched_officer_name": None, "greeting_text": "",
+            "greeting_score": 0, "greeting_compliance": "MISSING",
+            "suggestions": ["Officer did not introduce themselves before the interaction"],
+        }
+
+    text = transcript.lower().strip()
+    text_roman = transliterate_urdu_to_roman(text) if any(ord(c) > 255 for c in text) else text
+    search_text = f"{text} {text_roman}"
+
+    # Check each greeting component
+    salam_found = any(kw in search_text for kw in GREETING_MARKERS["salam"])
+    name_introduced = any(kw in search_text for kw in GREETING_MARKERS["introduction"])
+    station_mentioned = any(kw in search_text for kw in GREETING_MARKERS["station"])
+    role_mentioned = any(kw in search_text for kw in GREETING_MARKERS["role"])
+
+    # Extract officer name from greeting
+    extracted_name = None
+    name_patterns = [
+        r"(?:mera\s+naam|mera\s+name|mera\s+nam|my\s+name\s+is)\s+([A-Za-z\s]+?)(?:\s+hai|\s+h\b|\s+ha\b|\s+he\b|\s+hoon|\s+hun|\s+hon|,|\.|$)",
+        r"(?:mein|main|mei|i\s+am)\s+([A-Za-z\s]+?)(?:\s+hoon|\s+hun|\s+hon|\s+hu\b|,|\s+enforcement|\s+officer|\s+warden|\s+se\b|\s+say\b|$)",
+        r"(?:naam|name|nam)\s+([A-Za-z\s]+?)\s+(?:hai|h\b|ha\b|he\b)",
+        r"(?:میرا\s+نام)\s+([^\s,\.]+(?:\s+[^\s,\.]+)?)",
+    ]
+    import re
+    for pattern in name_patterns:
+        match = re.search(pattern, search_text, re.IGNORECASE)
+        if match:
+            name_candidate = match.group(1).strip()
+            # Clean up — remove common trailing words
+            for stop in ["hai", "h", "ha", "hoon", "hun", "hon", "aur", "or", "mein", "main", "se", "say"]:
+                name_candidate = re.sub(rf'\b{stop}\b.*$', '', name_candidate, flags=re.IGNORECASE).strip()
+            if len(name_candidate) >= 2 and len(name_candidate) <= 40:
+                extracted_name = name_candidate.title()
+                break
+
+    # Extract station/area name
+    extracted_station = None
+    station_patterns = [
+        r"([A-Za-z\s]+?)\s+(?:enforcement\s+stations?|station\s+se|thane\s+se|area\s+se|station\s+say|stations?\s+say|stations?\s+se|stations?\s+sy|stations?\s+sey)",
+        r"(?:mein|main)\s+([A-Za-z\s]+?)\s+(?:se|say|sy|sey)\s+(?:aaya|aya|aye|aa?ya)",
+        r"(?:mein|main)\s+([A-Za-z\s]+?)\s+(?:enforcement)",
+        r"(?:station|thane|thana|area)\s*(?:se|say|sy|sey|ka|ki)\s*(?:aaya|aya|aye)?\s*(?:hoon|hon|hun|hu)?",
+        r"(?:سٹیشن|تھانے|ایریا)\s*(?:سے|کا|کی)",
+    ]
+    for pattern in station_patterns:
+        match = re.search(pattern, search_text, re.IGNORECASE)
+        if match and match.lastindex:
+            station_candidate = match.group(1).strip()
+            for stop in ["mein", "main", "mei", "aur", "or", "se", "say"]:
+                station_candidate = re.sub(rf'\b{stop}\b.*$', '', station_candidate, flags=re.IGNORECASE).strip()
+            if len(station_candidate) >= 2 and len(station_candidate) <= 50:
+                extracted_station = station_candidate.title()
+                break
+
+    # Try to match extracted name with enrolled officers
+    matched_officer_id = None
+    matched_officer_name = None
+    if extracted_name:
+        for oid, odata in OFFICERS.items():
+            officer_name = odata.get("name", "").lower()
+            extracted_lower = extracted_name.lower()
+            # Check if names match (full or partial — first name or last name)
+            name_parts = officer_name.split()
+            extracted_parts = extracted_lower.split()
+            if (extracted_lower in officer_name or officer_name in extracted_lower or
+                any(p in extracted_parts for p in name_parts if len(p) > 2)):
+                matched_officer_id = oid
+                matched_officer_name = odata.get("name")
+                break
+
+    # Calculate greeting score
+    score_parts = {
+        "salam": 25 if salam_found else 0,
+        "name": 30 if name_introduced and extracted_name else (15 if name_introduced else 0),
+        "station": 25 if station_mentioned else 0,
+        "role": 20 if role_mentioned else 0,
+    }
+    greeting_score = sum(score_parts.values())
+
+    # Determine compliance level
+    if greeting_score >= 75:
+        greeting_compliance = "FULL"
+    elif greeting_score >= 40:
+        greeting_compliance = "PARTIAL"
+    else:
+        greeting_compliance = "MISSING"
+
+    greeting_detected = greeting_score >= 40
+
+    # Build suggestions for missing components
+    suggestions = []
+    if not salam_found:
+        suggestions.append("Start with 'Assalam Alaikum' greeting")
+    if not name_introduced:
+        suggestions.append("Introduce yourself: 'Mera naam [Your Name] hai'")
+    elif not extracted_name:
+        suggestions.append("Name was mentioned but could not be clearly detected — speak slowly")
+    if not station_mentioned:
+        suggestions.append("Mention your station: '[Station Name] enforcement station se aaya hoon'")
+    if not role_mentioned:
+        suggestions.append("Mention your role: 'Enforcement Officer' or 'Traffic Warden'")
+
+    # Extract the greeting portion of transcript (first ~50 words or first sentence)
+    greeting_text = ""
+    if greeting_detected:
+        words = transcript.split()
+        greeting_text = " ".join(words[:min(50, len(words))])
+        # Try to cut at first violation-like content
+        for sep in [".", "!", "?", "۔"]:
+            if sep in greeting_text:
+                greeting_text = greeting_text[:greeting_text.index(sep) + 1]
+                break
+
+    print(f"  [greeting] score={greeting_score} compliance={greeting_compliance} "
+          f"salam={salam_found} name={extracted_name} station={extracted_station} "
+          f"officer_match={matched_officer_id}", flush=True)
+
+    return {
+        "greeting_detected": greeting_detected,
+        "salam_found": salam_found,
+        "name_introduced": name_introduced,
+        "station_mentioned": station_mentioned,
+        "role_mentioned": role_mentioned,
+        "extracted_name": extracted_name,
+        "extracted_station": extracted_station,
+        "matched_officer_id": matched_officer_id,
+        "matched_officer_name": matched_officer_name,
+        "greeting_text": greeting_text,
+        "greeting_score": greeting_score,
+        "greeting_compliance": greeting_compliance,
+        "greeting_score_breakdown": score_parts,
+        "suggestions": suggestions,
+    }
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1623,6 +1879,40 @@ def run_analysis(audio, sr, officer_id="EO_001", source="upload", filename=""):
     tone_label, tone_proba, acoustics, tone_score, tone_viols, tone_percents = analyze_tone(analyze_audio, sr)
     kw_score, kw_viols = detect_keywords(transcript)
 
+    # EO Greeting Detection — identify officer from spoken introduction
+    greeting_info = detect_eo_greeting(transcript)
+
+    # If greeting matched an enrolled officer, update officer identification
+    if greeting_info["matched_officer_id"] and greeting_info["matched_officer_id"] in OFFICERS:
+        greeting_officer_id = greeting_info["matched_officer_id"]
+        # If voiceprint also detected EO, double-confirmed
+        if eo_detected:
+            greeting_info["voice_match"] = True
+            greeting_info["identification_method"] = "greeting + voiceprint (double confirmed)"
+        else:
+            greeting_info["voice_match"] = False
+            greeting_info["identification_method"] = "greeting only (voiceprint not matched)"
+    elif eo_detected:
+        greeting_info["voice_match"] = True
+        greeting_info["identification_method"] = "voiceprint only (no greeting detected)"
+    else:
+        greeting_info["voice_match"] = False
+        greeting_info["identification_method"] = "unidentified"
+
+    # Add greeting compliance as a violation if MISSING
+    if greeting_info["greeting_compliance"] == "MISSING":
+        kw_viols.append({
+            "type":           "UNPROFESSIONAL",
+            "severity":       "MEDIUM",
+            "score":          10,
+            "label":          "No Greeting / Self-Introduction",
+            "description":    "Officer did not introduce themselves before the interaction",
+            "detail":         "EO Protocol: Officers must greet citizens and introduce themselves with name and station",
+            "keywords_found": [],
+            "source":         "greeting_detection",
+        })
+        kw_score = min(kw_score + 10, 100)
+
     all_viols   = tone_viols + kw_viols
     total_score = min(tone_score + kw_score, 100)
     severity    = (
@@ -1706,6 +1996,7 @@ def run_analysis(audio, sr, officer_id="EO_001", source="upload", filename=""):
         "transcript":           transcript,
         "transcription_method": transcription_method,
         "transcript_source":    "auto_voice_detection",
+        "greeting":             greeting_info,
         "tone_label":           tone_label,
         "tone_proba":           tone_proba,
         "tone_percents":        tone_percents,
@@ -1957,6 +2248,32 @@ def get_samples():
     return jsonify({"samples": out})
 
 
+@app.route("/api/greeting-templates")
+def get_greeting_templates():
+    """Return suggested greeting templates for officers."""
+    templates = []
+    for tmpl in EO_GREETING_TEMPLATES:
+        templates.append({
+            "template_urdu": tmpl,
+            "template_roman": tmpl,
+        })
+    return jsonify({
+        "templates": templates,
+        "required_components": [
+            {"key": "salam",   "label": "Greeting (Salam)",    "points": 25, "example": "Assalam Alaikum"},
+            {"key": "name",    "label": "Officer Name",         "points": 30, "example": "Mera naam Irfan Ali hai"},
+            {"key": "station", "label": "Station / Area",       "points": 25, "example": "Modal Town enforcement station se aaya hoon"},
+            {"key": "role",    "label": "Role / Designation",   "points": 20, "example": "Enforcement Officer / Traffic Warden"},
+        ],
+        "example_full": "Assalam Alaikum, mera naam Irfan Ali hai, mein Modal Town enforcement station se aaya hoon, enforcement officer hoon",
+        "compliance_levels": {
+            "FULL":    {"min_score": 75, "label": "Full Compliance", "color": "#10B981"},
+            "PARTIAL": {"min_score": 40, "label": "Partial Compliance", "color": "#F59E0B"},
+            "MISSING": {"min_score": 0,  "label": "No Greeting", "color": "#EF4444"},
+        },
+    })
+
+
 @app.route("/api/keywords")
 def get_keywords():
     return jsonify({
@@ -2093,9 +2410,9 @@ if __name__ == "__main__":
     _gk = os.environ.get("GEMINI_API_KEY", "").strip()
     if not _gk:
         gem_status = "NOT SET (set GEMINI_API_KEY for best accuracy)"
-    elif not _gk.startswith("AIza"):
+    elif len(_gk) < 10:
         gem_status = (
-            f"INVALID FORMAT ('{_gk[:6]}...') — Gemini keys must start with 'AIza'. "
+            f"KEY TOO SHORT ('{_gk[:6]}...') — check GEMINI_API_KEY. "
             "Create one at https://aistudio.google.com/app/apikey"
         )
     else:
