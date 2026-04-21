@@ -422,6 +422,48 @@ def _remove_repetitions(text):
     return text
 
 
+def _strip_llm_commentary(text):
+    """Strip LLM meta-commentary that sometimes leaks into Gemini transcripts on noisy audio.
+
+    Removes timestamp prefixes (e.g. '1:50 -'), parenthetical editor notes ('(repeated, but
+    I'll transcribe once)'), and lines that are purely commentary. Returns '' if the cleaned
+    text is too short to be a real transcript (triggers downstream fallback to Google/Whisper).
+    """
+    if not text:
+        return text
+    import re
+
+    commentary_kw = re.compile(
+        r"\b(repeated|transcribe|i['’]ll|i will|unclear|inaudible|"
+        r"cannot hear|can't hear|no speech|no audio|silence|unintelligible|"
+        r"note:|editor|assistant|as an ai)\b",
+        re.IGNORECASE,
+    )
+    timestamp_prefix = re.compile(r"^\s*\d{1,2}:\d{2}\s*[-–—:]*\s*")
+    parenthetical = re.compile(r"[\(\[][^\)\]]*[\)\]]")
+
+    cleaned_lines = []
+    for line in text.splitlines():
+        line = timestamp_prefix.sub("", line)
+        line = re.sub(r"\s\d{1,2}:\d{2}\s*[-–—:]*\s*", " ", line)
+        dropped = parenthetical.sub(
+            lambda m: "" if commentary_kw.search(m.group(0)) else m.group(0),
+            line,
+        )
+        stripped = dropped.strip(" \"'“”‘’")
+        if not stripped:
+            continue
+        if commentary_kw.search(stripped) and len(stripped.split()) < 8:
+            continue
+        cleaned_lines.append(stripped)
+
+    out = " ".join(cleaned_lines)
+    out = re.sub(r"\s+", " ", out).strip()
+    if len(out) < 4:
+        return ""
+    return out
+
+
 def _gemini_upload_file(key, audio_path):
     """Upload an audio file to Gemini's Files API. Returns the file URI on success, or ''."""
     import requests
@@ -476,12 +518,17 @@ def _gemini_transcribe_via_file(key, file_uri):
         "You are a Pakistani Urdu transcription expert. "
         "Transcribe this audio EXACTLY ONCE in Urdu script. "
         "Do not repeat phrases. If unsure, transcribe once only. "
-        "Return ONLY the transcription — no explanations."
+        "Return ONLY the transcription — no explanations. "
+        "NEVER output timestamps (e.g. '1:50 -'), parentheticals like '(repeated)' or "
+        "'(I'll transcribe once)', or any commentary about the transcription process. "
+        "If audio is unclear, skip it silently. If there is no clear speech, return ENTIRELY EMPTY."
     )
     english_prompt = (
         "Translate this audio to Roman Urdu / English. "
         "Write Urdu words in Roman letters. Do not repeat phrases. "
-        "Return ONLY the transliteration."
+        "Return ONLY the transliteration. "
+        "NEVER output timestamps or parenthetical notes like '(repeated)'. "
+        "If a section is unclear, skip it silently. If no clear speech, return empty."
     )
     for label, ptext, target in [("ur", urdu_prompt, "urdu"), ("en", english_prompt, "english")]:
         try:
@@ -503,11 +550,15 @@ def _gemini_transcribe_via_file(key, file_uri):
             cleaned = _remove_repetitions(txt)
             if _detect_hallucination(cleaned):
                 cleaned = _clean_hallucination(cleaned)
+            cleaned = _strip_llm_commentary(cleaned)
             if target == "urdu":
                 urdu_text = cleaned
             else:
                 english_text = cleaned
-            print(f"  [gemini-{label}-file] {cleaned[:150]}", flush=True)
+            if cleaned:
+                print(f"  [gemini-{label}-file] {cleaned[:150]}", flush=True)
+            else:
+                print(f"  [gemini-{label}-file] empty after cleanup", flush=True)
         except Exception as e:
             print(f"  [gemini-{label}-file] error: {e}", flush=True)
     return urdu_text, english_text
@@ -561,9 +612,14 @@ def _gemini_transcribe(audio_path):
                     "2. DO NOT duplicate sentences. If unsure, transcribe it once only.\n"
                     "3. Keep Urdu words in Urdu script, English words in English.\n"
                     "4. Use standard punctuation (۔ ،).\n"
-                    "5. If audio has no clear speech, return empty.\n"
+                    "5. If audio has no clear speech, return ENTIRELY EMPTY — a blank string, not a note.\n"
                     "6. Return ONLY the transcription text — no explanations, no markdown, no labels.\n"
-                    "7. Listen carefully - if the speaker says something once, write it once."
+                    "7. Listen carefully - if the speaker says something once, write it once.\n"
+                    "8. NEVER output timestamps like '1:50 -' or '0:23'. Only the spoken words.\n"
+                    "9. NEVER output editor notes, parentheticals like '(repeated, but...)', "
+                    "'(I'll transcribe once)', '(unclear)', or any commentary ABOUT the transcription. "
+                    "If a section is unclear, just skip it silently.\n"
+                    "10. NEVER write about yourself, your process, or what you heard — only the words spoken."
                 )},
                 {"inline_data": {"mime_type": "audio/wav", "data": audio_b64}}
             ]}],
@@ -599,8 +655,16 @@ def _gemini_transcribe(audio_path):
                     # Extra hallucination check
                     if _detect_hallucination(cleaned):
                         cleaned = _clean_hallucination(cleaned)
+                    # Strip LLM meta-commentary (timestamps, "(repeated...)" etc.) — crucial for video
+                    before_strip = cleaned
+                    cleaned = _strip_llm_commentary(cleaned)
+                    if cleaned != before_strip:
+                        print(f"  [gemini-ur] stripped LLM commentary", flush=True)
                     urdu_text = cleaned
-                    print(f"  [gemini-ur] {urdu_text[:200]}", flush=True)
+                    if urdu_text:
+                        print(f"  [gemini-ur] {urdu_text[:200]}", flush=True)
+                    else:
+                        print(f"  [gemini-ur] empty after cleanup — will fallback", flush=True)
             except (KeyError, IndexError):
                 print(f"  [gemini-ur] empty response", flush=True)
         else:
@@ -617,7 +681,11 @@ def _gemini_transcribe(audio_path):
                         "Translate this audio to Roman Urdu / English. "
                         "Write Urdu words in Roman letters (like 'rishwat', 'bakwas', 'chup raho'). "
                         "DO NOT repeat phrases. Each phrase appears only once. "
-                        "Return ONLY the transliteration, no explanations."
+                        "Return ONLY the transliteration, no explanations.\n"
+                        "NEVER output timestamps, parentheticals like '(repeated)' or '(unclear)', "
+                        "or any commentary about the transcription process. "
+                        "If a section is unclear, skip it silently. "
+                        "If the audio has no clear speech, return an ENTIRELY EMPTY string."
                     )},
                     {"inline_data": {"mime_type": "audio/wav", "data": audio_b64}}
                 ]}],
@@ -649,8 +717,12 @@ def _gemini_transcribe(audio_path):
                         cleaned = _remove_repetitions(text)
                         if _detect_hallucination(cleaned):
                             cleaned = _clean_hallucination(cleaned)
+                        cleaned = _strip_llm_commentary(cleaned)
                         english_text = cleaned
-                        print(f"  [gemini-en] {english_text[:200]}", flush=True)
+                        if english_text:
+                            print(f"  [gemini-en] {english_text[:200]}", flush=True)
+                        else:
+                            print(f"  [gemini-en] empty after cleanup", flush=True)
                 except (KeyError, IndexError):
                     pass
         except Exception as e:
