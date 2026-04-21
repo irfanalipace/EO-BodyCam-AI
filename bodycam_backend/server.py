@@ -1588,24 +1588,51 @@ def detect_eo_greeting(transcript):
                 extracted_name = name_candidate.title()
                 break
 
-    # Extract station/area name
+    # Extract station/area name.
+    # Strategy: capture ONLY the 1-4 words immediately before "station"/"thane"/"enforcement".
+    # The old logic greedily captured everything before "station se" (including the officer's
+    # name/greeting) and then tried to delete stop words — but "main" (Urdu for "I") precedes
+    # the station name, so `\bmain\b.*$` was deleting the real station. Rewritten to be
+    # anchor-based: match "<STATION_NAME_WORDS> (enforcement )?station se" and capture only
+    # the immediately-preceding word tokens.
     extracted_station = None
+    # Fallback is restricted to 1-2 words to avoid scooping up "ahmed hai" etc.;
+    # the primary "main"-anchored patterns allow up to 3 words for multi-word station names.
     station_patterns = [
-        r"([A-Za-z\s]+?)\s+(?:enforcement\s+stations?|station\s+se|thane\s+se|area\s+se|station\s+say|stations?\s+say|stations?\s+se|stations?\s+sy|stations?\s+sey)",
-        r"(?:mein|main)\s+([A-Za-z\s]+?)\s+(?:se|say|sy|sey)\s+(?:aaya|aya|aye|aa?ya)",
-        r"(?:mein|main)\s+([A-Za-z\s]+?)\s+(?:enforcement)",
-        r"(?:station|thane|thana|area)\s*(?:se|say|sy|sey|ka|ki)\s*(?:aaya|aya|aye)?\s*(?:hoon|hon|hun|hu)?",
-        r"(?:سٹیشن|تھانے|ایریا)\s*(?:سے|کا|کی)",
+        # "main <STATION> (enforcement )?(station|thane) se aaya" — primary, "main" anchor
+        r"\b(?:mein|main)\s+((?:[A-Za-z]+\s+){0,2}?[A-Za-z]+)\s+(?:enforcement\s+)?(?:stations?|thanas?|thanes?)\s+(?:se|say|sy|sey)\s+(?:aaya|aya|aye)",
+        # "main <STATION> area se"
+        r"\b(?:mein|main)\s+((?:[A-Za-z]+\s+){0,2}?[A-Za-z]+)\s+area\s+(?:se|say|sy|sey)",
+        # Fallback: "<STATION> (enforcement )?(station|thane) se" — only 1-2 words captured
+        r"\b([A-Za-z]+(?:\s+[A-Za-z]+)?)\s+(?:enforcement\s+)?(?:stations?|thanas?|thanes?)\s+(?:se|say|sy|sey)",
     ]
+    # Words that are NEVER a station name — at the edge, pop them; inside, REJECT capture.
+    _filler_words = {
+        "mera", "meri", "mere", "naam", "nam", "name", "hai", "hain", "hun", "hoon", "hon",
+        "main", "mein", "mei", "aur", "or", "ki", "ka", "se", "say", "sy",
+        "wa", "walaikum", "assalam", "alaikum", "salam", "my", "is", "i", "am",
+        "ji", "the", "a", "an", "and", "enforcement",
+    }
     for pattern in station_patterns:
-        match = re.search(pattern, search_text, re.IGNORECASE)
-        if match and match.lastindex:
-            station_candidate = match.group(1).strip()
-            for stop in ["mein", "main", "mei", "aur", "or", "se", "say"]:
-                station_candidate = re.sub(rf'\b{stop}\b.*$', '', station_candidate, flags=re.IGNORECASE).strip()
-            if len(station_candidate) >= 2 and len(station_candidate) <= 50:
-                extracted_station = station_candidate.title()
+        for match in re.finditer(pattern, search_text, re.IGNORECASE):
+            if not match.lastindex:
+                continue
+            candidate = match.group(1).strip()
+            tokens = candidate.split()
+            while tokens and tokens[0].lower() in _filler_words:
+                tokens.pop(0)
+            while tokens and tokens[-1].lower() in _filler_words:
+                tokens.pop()
+            # If any interior token is a filler word, the capture spanned across a phrase
+            # boundary (e.g. "ahmed hai model town") — reject and try the next match/pattern.
+            if any(t.lower() in _filler_words for t in tokens):
+                continue
+            candidate = " ".join(tokens)
+            if 2 <= len(candidate) <= 50 and tokens:
+                extracted_station = candidate.title()
                 break
+        if extracted_station:
+            break
 
     # Try to match extracted name with enrolled officers
     matched_officer_id = None
