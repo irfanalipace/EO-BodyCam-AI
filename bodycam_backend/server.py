@@ -551,7 +551,7 @@ def _gemini_transcribe(audio_path):
     return urdu_text, english_text
 
 
-def _gemini_full_analysis(audio_path, transcript, tone_label, violations, acoustics, language_hint="ur"):
+def _gemini_full_analysis(audio_path, transcript, tone_label, violations, acoustics, language_hint="ur", greeting_info=None):
     """Run Gemini as a full Internal-Affairs analyst: uploads audio + transcript context,
     returns a structured JSON dict with transcription, vulgar_language, false_statements,
     loud_aggressive_voice, bribery_indicators, and overall_assessment.
@@ -689,7 +689,28 @@ Respond ONLY with valid JSON in this exact format (no markdown, no code fences):
         "for similar incidents is also advised.\""
     )
 
-    parts = [{"text": system_prompt + "\n\n" + analysis_prompt}]
+    greeting_block = ""
+    if greeting_info:
+        compliance = greeting_info.get("greeting_compliance", "MISSING")
+        g_score = greeting_info.get("greeting_score", 0)
+        salam = greeting_info.get("salam_found", False)
+        name_ok = greeting_info.get("name_introduced", False)
+        station_ok = greeting_info.get("station_mentioned", False)
+        role_ok = greeting_info.get("role_mentioned", False)
+        ex_name = greeting_info.get("extracted_name") or "NOT PROVIDED"
+        ex_station = greeting_info.get("extracted_station") or "NOT PROVIDED"
+        greeting_block = (
+            f"\n\n**EO GREETING PROTOCOL COMPLIANCE (Officer self-identification):**\n"
+            f"- Compliance: {compliance} ({g_score}/100)\n"
+            f"- Salam greeting: {'YES' if salam else 'NO (VIOLATION)'}\n"
+            f"- Officer name introduced: {'YES (' + ex_name + ')' if name_ok else 'NO (VIOLATION)'}\n"
+            f"- Station mentioned: {'YES (' + ex_station + ')' if station_ok else 'NO (VIOLATION)'}\n"
+            f"- Role/Designation stated: {'YES' if role_ok else 'NO (VIOLATION)'}\n"
+            f"NOTE: Per EO Protocol, officers MUST introduce themselves before citizen interaction. "
+            f"Failure to do so is an Officer violation (not Customer).\n"
+        )
+
+    parts = [{"text": system_prompt + "\n\n" + analysis_prompt + greeting_block}]
     if audio_b64:
         parts.append({"inline_data": {"mime_type": mime_type, "data": audio_b64}})
 
@@ -733,7 +754,7 @@ Respond ONLY with valid JSON in this exact format (no markdown, no code fences):
     return {}
 
 
-def _gemini_assess_behavior(transcript, tone_label, violations, acoustics):
+def _gemini_assess_behavior(transcript, tone_label, violations, acoustics, greeting_info=None):
     """Use Gemini to generate a professional behavior assessment based on transcript + analysis.
     Returns human-readable paragraph describing the officer's behavior.
     """
@@ -763,6 +784,21 @@ def _gemini_assess_behavior(transcript, tone_label, violations, acoustics):
             f"energy={energy}, agitation={agitation}, loud_duration={loud_dur}s"
         )
 
+    greeting_context = ""
+    if greeting_info:
+        compliance = greeting_info.get("greeting_compliance", "MISSING")
+        g_score = greeting_info.get("greeting_score", 0)
+        salam = greeting_info.get("salam_found", False)
+        name_ok = greeting_info.get("name_introduced", False)
+        station_ok = greeting_info.get("station_mentioned", False)
+        role_ok = greeting_info.get("role_mentioned", False)
+        greeting_context = (
+            f"\n**EO Greeting Protocol (Officer self-identification):** "
+            f"{compliance} ({g_score}/100) — "
+            f"Salam:{'✓' if salam else '✗'}, Name:{'✓' if name_ok else '✗'}, "
+            f"Station:{'✓' if station_ok else '✗'}, Role:{'✓' if role_ok else '✗'}"
+        )
+
     prompt = f"""You are an expert professional conduct evaluator analyzing a bodycam recording of an Enforcement Officer (EO) interaction with a civilian.
 
 **Audio Transcript (Urdu/English):**
@@ -773,13 +809,15 @@ def _gemini_assess_behavior(transcript, tone_label, violations, acoustics):
 **{acoustic_info}**
 
 **{viol_summary}**
+{greeting_context}
 
 Write a PROFESSIONAL behavior assessment in 3-4 sentences. Analyze:
-1. Whether the officer used abusive, harsh, or unprofessional language
-2. The tone (aggressive/calm/intimidating/bribing)
-3. Voice characteristics (shouting/loud/calm based on acoustics)
-4. Key violations observed
-5. Severity of professional ethics breach
+1. Whether the officer properly introduced themselves (Salam, Name, Station, Role)
+2. Whether the officer used abusive, harsh, or unprofessional language
+3. The tone (aggressive/calm/intimidating/bribing)
+4. Voice characteristics (shouting/loud/calm based on acoustics)
+5. Key violations observed
+6. Severity of professional ethics breach
 
 Rules:
 - Write ONLY the assessment paragraph, no headings, no bullet points
@@ -1944,7 +1982,7 @@ def run_analysis(audio, sr, officer_id="EO_001", source="upload", filename=""):
     behavior = assess_behavior(total_score, severity, tone_label, all_viols, transcript)
 
     # AI-generated behavior assessment (Gemini) — text summary
-    ai_assessment = _gemini_assess_behavior(transcript, tone_label, all_viols, acoustics)
+    ai_assessment = _gemini_assess_behavior(transcript, tone_label, all_viols, acoustics, greeting_info)
 
     # Full structured Gemini analysis (transcription, vulgar, false, aggressive, bribery, overall)
     import soundfile as _sf
@@ -1955,7 +1993,8 @@ def run_analysis(audio, sr, officer_id="EO_001", source="upload", filename=""):
             _sf.write(_gf.name, analyze_audio[:sr * 300].astype(np.float32), sr)
             tmp_assess = _gf.name
         gemini_analysis = _gemini_full_analysis(
-            tmp_assess, transcript, tone_label, all_viols, acoustics, language_hint="ur"
+            tmp_assess, transcript, tone_label, all_viols, acoustics, language_hint="ur",
+            greeting_info=greeting_info,
         )
     except Exception as _e:
         print(f"  Gemini full analysis wrapper error: {_e}", flush=True)

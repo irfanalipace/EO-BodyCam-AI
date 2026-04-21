@@ -246,13 +246,13 @@ export default function Upload() {
                 <Spinner size={40} color="#3B82F6"/>
               </div>
               <div style={{ fontSize:'16px', fontWeight:700, color:'#F1F5F9', marginBottom:'10px' }}>
-                AI Analyzing Audio
+                AI Analyzing {file?.type?.startsWith('video') ? 'Video' : 'Audio'}
               </div>
               <div style={{ fontSize:'13px', color:'#3B82F6', minHeight:'20px', fontWeight:600 }}>
                 {progress || 'Processing...'}
               </div>
               <div style={{ fontSize:'11px', color:'#475569', marginTop:'12px' }}>
-                Detecting voice · Transcribing Urdu · Finding violations
+                {file?.type?.startsWith('video') ? 'Extracting audio from video · ' : ''}Detecting voice · Transcribing Urdu · Finding violations
               </div>
             </div>
           )}
@@ -368,7 +368,7 @@ function ResultPanel({ result: r }) {
       {r.transcript && (
         <div style={CARD}>
           <div style={{ display:'flex', alignItems:'center', gap:'10px', marginBottom:'12px' }}>
-            <span style={LABEL}>🎙 Speech Detected from Audio</span>
+            <span style={LABEL}>{mediaType === 'video' ? '🎬' : '🎙'} Speech Detected from {mediaType === 'video' ? 'Video' : 'Audio'}</span>
             <span style={{ background:'rgba(16,185,129,0.12)', color:'#10B981', fontSize:'10px',
               padding:'4px 12px', borderRadius:'8px', fontWeight:700, marginBottom:'10px',
               border:'1px solid rgba(16,185,129,0.25)' }}>
@@ -415,10 +415,17 @@ function ResultPanel({ result: r }) {
         </div>
       )}
 
-      {/* 🤖 GEMINI AI ASSESSMENT */}
-      {(r.ai_assessment || r.gemini_analysis) && (
-        <GeminiAssessment assessment={r.ai_assessment} analysis={r.gemini_analysis}/>
-      )}
+      {/* 🤖 GEMINI AI ASSESSMENT — Always shown */}
+      <GeminiAssessment
+        assessment={r.ai_assessment}
+        analysis={r.gemini_analysis}
+        greeting={r.greeting}
+        behavior={r.behavior_assessment}
+        severity={sev}
+        totalScore={r.total_score}
+        toneLabel={r.tone_label}
+        violations={r.violations}
+      />
 
       {/* Violations Detail */}
       <div style={CARD}>
@@ -452,9 +459,10 @@ function ResultPanel({ result: r }) {
      
 
     
- <div style={{ display:'grid',   gridTemplateColumns: 'repeat(2, 1fr)', gap:'10px', marginBottom:'14px' }}>
+ <div style={{ display:'grid',   gridTemplateColumns: 'repeat(3, 1fr)', gap:'10px', marginBottom:'14px' }}>
         {[
           { label:'EO Voice', icon:'👤', value:r.eo_detected?'Detected':'Not found', sub:`similarity: ${r.max_similarity}`, color:r.eo_detected?'#10B981':'#EF4444' },
+          { label:'Media Type', icon: mediaType==='video'?'🎬':'🎙', value: mediaType==='video'?'Video':'Audio', sub:`duration: ${r.total_duration_sec}s`, color:'#3B82F6' },
           { label:'Processed', icon:'⚡', value:`${r.processing_time_sec}s`, sub:`${r.speech_segments} speech segments` },
         ].map(m => (
           <div key={m.label} style={{ background:'#111827', border:'1px solid #1F2937', borderRadius:'14px', padding:'16px' }}>
@@ -586,14 +594,66 @@ function CategoryTile({ icon, title, data }) {
 }
 
 
-function GeminiAssessment({ assessment, analysis }) {
+function GeminiAssessment({ assessment, analysis, greeting, behavior, severity, totalScore, toneLabel, violations }) {
   const g = analysis || {}
   const oa = g.overall_assessment || {}
-  const summary = oa.summary || assessment || ''
-  const action = oa.recommended_action || ''
-  const classification = (oa.classification || '').toLowerCase()
-  const cls = CLASS_COLOR[classification] || { fg:'#8B5CF6', label:(oa.classification || 'ANALYZED').toUpperCase() }
-  const risk = typeof oa.risk_score === 'number' ? oa.risk_score : null
+
+  // Build fallback summary from available local data when Gemini is unavailable
+  const buildFallbackSummary = () => {
+    const parts = []
+    const viols = violations || []
+    const totalViols = viols.length
+    const sev = severity || 'NORMAL'
+    const rating = behavior?.overall_rating || (sev === 'CRITICAL' ? 'SEVERE_MISCONDUCT' : sev === 'WARNING' ? 'UNPROFESSIONAL' : 'PROFESSIONAL')
+
+    if (sev === 'CRITICAL') {
+      parts.push(`The officer's conduct in this recording is rated ${rating}, with a total violation score of ${totalScore}/100.`)
+    } else if (sev === 'WARNING') {
+      parts.push(`The officer's conduct in this recording is rated ${rating}, with a total violation score of ${totalScore}/100.`)
+    } else {
+      parts.push(`The officer's conduct in this recording is rated ${rating}, with a total violation score of ${totalScore}/100.`)
+    }
+
+    if (toneLabel && toneLabel !== 'NORMAL') {
+      parts.push(`Voice tone was classified as ${toneLabel}.`)
+    }
+
+    if (totalViols > 0) {
+      const catSet = new Set(viols.map(v => v.type))
+      parts.push(`${totalViols} violation${totalViols === 1 ? '' : 's'} detected across categor${catSet.size === 1 ? 'y' : 'ies'}: ${[...catSet].join(', ')}.`)
+    } else {
+      parts.push('No behavioural violations were detected in the officer\'s voice.')
+    }
+
+    if (greeting) {
+      if (greeting.greeting_compliance === 'FULL') {
+        parts.push(`Officer followed the greeting protocol correctly (${greeting.greeting_score}/100).`)
+      } else if (greeting.greeting_compliance === 'PARTIAL') {
+        parts.push(`Officer only partially followed the greeting protocol (${greeting.greeting_score}/100).`)
+      } else {
+        parts.push(`Officer did not introduce themselves per EO protocol (${greeting.greeting_score}/100).`)
+      }
+    }
+
+    return parts.join(' ')
+  }
+
+  const buildFallbackAction = () => {
+    const sev = severity || 'NORMAL'
+    if (sev === 'CRITICAL') {
+      return 'Suspend officer pending investigation. Forward recording to Internal Affairs for disciplinary review. Schedule mandatory retraining on professional conduct, de-escalation, and anti-corruption protocols.'
+    }
+    if (sev === 'WARNING') {
+      return 'Issue a formal warning to the officer. Schedule retraining on professional communication, de-escalation techniques, and respectful public interaction. Review additional body-camera footage for similar patterns.'
+    }
+    return 'No disciplinary action required. Continue routine monitoring and encourage the officer to maintain professional standards.'
+  }
+
+  const summary = oa.summary || assessment || buildFallbackSummary()
+  const action = oa.recommended_action || buildFallbackAction()
+  const classification = (oa.classification || (severity === 'CRITICAL' ? 'critical' : severity === 'WARNING' ? 'unprofessional' : 'normal')).toLowerCase()
+  const cls = CLASS_COLOR[classification] || { fg:'#8B5CF6', label:(oa.classification || classification || 'ANALYZED').toUpperCase() }
+  const risk = typeof oa.risk_score === 'number' ? oa.risk_score : (typeof totalScore === 'number' ? totalScore : null)
 
   const detectedList = [
     { key:'vulgar_language',       label:'Vulgar / Abusive Language' },
@@ -604,7 +664,10 @@ function GeminiAssessment({ assessment, analysis }) {
     .map(c => ({ ...c, data: g[c.key] }))
     .filter(c => c.data && c.data.detected)
 
-  if (!summary && !action && detectedList.length === 0 && risk === null) return null
+  const greetingMissing = greeting && greeting.greeting_compliance === 'MISSING'
+  const greetingPartial = greeting && greeting.greeting_compliance === 'PARTIAL'
+  const isFlagged = oa.is_flagged !== undefined ? oa.is_flagged : (severity === 'CRITICAL' || severity === 'WARNING')
+  const usingFallback = !oa.summary && !assessment
 
   return (
     <div style={{ background:'linear-gradient(135deg, rgba(139,92,246,0.08), rgba(59,130,246,0.08))',
@@ -625,7 +688,7 @@ function GeminiAssessment({ assessment, analysis }) {
           </div>
           <div style={{ fontSize:'10px', color:'#64748B', fontWeight:600,
             letterSpacing:'0.07em', textTransform:'uppercase' }}>
-            Gemini Multimodal Audio Analysis
+            {usingFallback ? 'Local Analysis — Gemini Unavailable' : 'Gemini Multimodal Audio Analysis'}
           </div>
         </div>
         {risk !== null && (
@@ -677,6 +740,48 @@ function GeminiAssessment({ assessment, analysis }) {
           </div>
         )}
 
+        {detectedList.length === 0 && (violations || []).length > 0 && (
+          <div style={{ fontSize:'13px', color:'#1F2937', lineHeight:1.7,
+            marginBottom:'14px', background:'#FFF5F5', borderRadius:'8px',
+            padding:'10px 14px', borderLeft:'3px solid #DC2626' }}>
+            <span style={{ color:'#DC2626', fontWeight:800 }}>Violations Detected: </span>
+            {(violations || []).length} violation{(violations || []).length === 1 ? '' : 's'} found in the officer's voice —{' '}
+            {[...new Set((violations || []).map(v => v.type))].map((t, i, arr) => (
+              <span key={t}>
+                <strong>{t}</strong>{i < arr.length - 1 ? ', ' : '.'}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {detectedList.length === 0 && (violations || []).length === 0 && !greetingMissing && !greetingPartial && (
+          <div style={{ fontSize:'13px', color:'#1F2937', lineHeight:1.7,
+            marginBottom:'14px', background:'#F0FDF4', borderRadius:'8px',
+            padding:'10px 14px', borderLeft:'3px solid #10B981' }}>
+            <span style={{ color:'#047857', fontWeight:800 }}>No Violations: </span>
+            The officer's voice showed no signs of abusive language, aggressive tone, threats, or bribery indicators during this interaction.
+          </div>
+        )}
+
+        {(greetingMissing || greetingPartial) && (
+          <div style={{ fontSize:'13px', color:'#1F2937', lineHeight:1.7,
+            marginBottom:'14px',
+            background: greetingMissing ? '#FFF5F5' : '#FFFBEB',
+            borderRadius:'8px', padding:'10px 14px',
+            borderLeft:`3px solid ${greetingMissing ? '#DC2626' : '#F59E0B'}` }}>
+            <span style={{ color: greetingMissing ? '#DC2626' : '#B45309', fontWeight:800 }}>
+              EO Greeting Protocol: {greetingMissing ? 'MISSING (Officer Violation)' : 'PARTIAL'} —{' '}
+            </span>
+            The officer {greetingMissing ? 'did not' : 'only partially'} introduce themselves before the interaction
+            (score: {greeting.greeting_score}/100).{' '}
+            {!greeting.salam_found && 'No Salam greeting. '}
+            {!greeting.name_introduced && 'Name not stated. '}
+            {!greeting.station_mentioned && 'Station not mentioned. '}
+            {!greeting.role_mentioned && 'Role/designation not stated. '}
+            This is an <strong>Officer violation</strong> per EO self-identification protocol.
+          </div>
+        )}
+
         {action && (
           <div style={{ fontSize:'13px', color:'#374151', lineHeight:1.7 }}>
             <span style={{ color:'#0F7A3E', fontWeight:800 }}>Recommended Action: </span>
@@ -684,7 +789,7 @@ function GeminiAssessment({ assessment, analysis }) {
           </div>
         )}
 
-        {oa.is_flagged && (
+        {isFlagged && (
           <div style={{ marginTop:'12px', display:'inline-block',
             background:'rgba(239,68,68,0.12)', border:'1px solid rgba(239,68,68,0.3)',
             color:'#DC2626', fontSize:'10px', fontWeight:700, letterSpacing:'0.08em',
