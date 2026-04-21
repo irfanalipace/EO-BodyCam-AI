@@ -2176,17 +2176,31 @@ def run_analysis(audio, sr, officer_id="EO_001", source="upload", filename=""):
     )
 
     # Number violations by severity rank (CRITICAL 1..N, WARNING 1..N, NORMAL 1..N)
-    # and attach a normalized impact_percent (points contributed out of 100)
+    # and attach impact_percent = this violation's share of the total uncapped score.
+    # This guarantees bars always sum to exactly 100 %, matching the displayed total.
     _rank = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
     all_viols.sort(key=lambda v: (_rank.get((v.get("severity") or "LOW").upper(), 99), -int(v.get("score", 0) or 0)))
+    _raw_total = sum(int(v.get("score", 0) or 0) for v in all_viols)
     _sev_counters = {}
-    for v in all_viols:
+    _running_pct = 0.0
+    for i, v in enumerate(all_viols):
         sev = (v.get("severity") or "LOW").upper()
         _sev_counters[sev] = _sev_counters.get(sev, 0) + 1
         v["severity_index"] = _sev_counters[sev]
         v["severity_label"] = f"{sev} {_sev_counters[sev]}"
         try:
-            v["impact_percent"] = round((int(v.get("score", 0) or 0) / 100.0) * 100, 1)
+            raw = int(v.get("score", 0) or 0)
+            if _raw_total > 0:
+                # Last violation gets whatever rounds to 100 - running total,
+                # so the final sum is exactly 100.0 (no rounding drift).
+                if i == len(all_viols) - 1:
+                    pct = round(100.0 - _running_pct, 1)
+                else:
+                    pct = round((raw / _raw_total) * 100.0, 1)
+                    _running_pct += pct
+                v["impact_percent"] = pct
+            else:
+                v["impact_percent"] = 0.0
         except Exception:
             v["impact_percent"] = 0.0
     critical_count = _sev_counters.get("CRITICAL", 0)
