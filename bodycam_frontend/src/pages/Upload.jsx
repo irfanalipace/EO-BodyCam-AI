@@ -43,11 +43,14 @@ export default function Upload() {
   const [error,    setError]    = useState(null)
   const [drag,     setDrag]     = useState(false)
   const [progress, setProgress] = useState('')
+  const [mediaUrl, setMediaUrl] = useState(null)
   const inputRef = useRef()
 
   const handleFile = f => {
     if (!f) return
+    if (mediaUrl) URL.revokeObjectURL(mediaUrl)
     setFile(f); setResult(null); setError(null)
+    setMediaUrl(URL.createObjectURL(f))
   }
   const onDrop = e => {
     e.preventDefault(); setDrag(false)
@@ -121,6 +124,11 @@ export default function Upload() {
             </div>
           </div>
 
+          {/* Media Player — shows after upload */}
+          {file && mediaUrl && (
+            <MediaPlayer file={file} url={mediaUrl} diarization={result?.diarization}/>
+          )}
+
           {/* Officer */}
           <div style={CARD}>
             <label style={LABEL}>Select Officer</label>
@@ -133,17 +141,7 @@ export default function Upload() {
           <div style={{ ...CARD, background:'linear-gradient(135deg, rgba(16,185,129,0.06), rgba(59,130,246,0.06))',
             border:'1px solid rgba(16,185,129,0.2)' }}>
             <span style={LABEL}>EO Greeting Protocol (Required)</span>
-            <div style={{ background:'#0B0F1A', borderRadius:'10px', padding:'14px 16px',
-              border:'1px solid #1F2937', marginBottom:'12px' }}>
-              <div style={{ fontSize:'11px', color:'#10B981', fontWeight:700, marginBottom:'8px',
-                letterSpacing:'0.06em', textTransform:'uppercase' }}>
-                Suggested Greeting
-              </div>
-              <div style={{ fontSize:'13px', color:'#F1F5F9', lineHeight:1.8,
-                fontStyle:'italic', direction:'ltr' }}>
-                "{GREETING_EXAMPLE}"
-              </div>
-            </div>
+        
             <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'6px' }}>
               {[
                 { icon:'🤝', label:'Salam', pts:'25 pts', desc:'Assalam Alaikum', color:'#10B981' },
@@ -350,6 +348,9 @@ function ResultPanel({ result: r }) {
 
   {/* EO Greeting Detection */}
       {<GreetingPanel greeting={r.greeting}/>}
+
+  {/* Speaker Diarization — Person 1 (EO) vs Person 2 (Customer) */}
+      <SpeakerDiarizationPanel diarization={r.diarization}/>
 
   {/* SVM Tone */}
       <div style={CARD}>
@@ -594,66 +595,14 @@ function CategoryTile({ icon, title, data }) {
 }
 
 
-function GeminiAssessment({ assessment, analysis, greeting, behavior, severity, totalScore, toneLabel, violations }) {
+function GeminiAssessment({ assessment, analysis, greeting }) {
   const g = analysis || {}
   const oa = g.overall_assessment || {}
-
-  // Build fallback summary from available local data when Gemini is unavailable
-  const buildFallbackSummary = () => {
-    const parts = []
-    const viols = violations || []
-    const totalViols = viols.length
-    const sev = severity || 'NORMAL'
-    const rating = behavior?.overall_rating || (sev === 'CRITICAL' ? 'SEVERE_MISCONDUCT' : sev === 'WARNING' ? 'UNPROFESSIONAL' : 'PROFESSIONAL')
-
-    if (sev === 'CRITICAL') {
-      parts.push(`The officer's conduct in this recording is rated ${rating}, with a total violation score of ${totalScore}/100.`)
-    } else if (sev === 'WARNING') {
-      parts.push(`The officer's conduct in this recording is rated ${rating}, with a total violation score of ${totalScore}/100.`)
-    } else {
-      parts.push(`The officer's conduct in this recording is rated ${rating}, with a total violation score of ${totalScore}/100.`)
-    }
-
-    if (toneLabel && toneLabel !== 'NORMAL') {
-      parts.push(`Voice tone was classified as ${toneLabel}.`)
-    }
-
-    if (totalViols > 0) {
-      const catSet = new Set(viols.map(v => v.type))
-      parts.push(`${totalViols} violation${totalViols === 1 ? '' : 's'} detected across categor${catSet.size === 1 ? 'y' : 'ies'}: ${[...catSet].join(', ')}.`)
-    } else {
-      parts.push('No behavioural violations were detected in the officer\'s voice.')
-    }
-
-    if (greeting) {
-      if (greeting.greeting_compliance === 'FULL') {
-        parts.push(`Officer followed the greeting protocol correctly (${greeting.greeting_score}/100).`)
-      } else if (greeting.greeting_compliance === 'PARTIAL') {
-        parts.push(`Officer only partially followed the greeting protocol (${greeting.greeting_score}/100).`)
-      } else {
-        parts.push(`Officer did not introduce themselves per EO protocol (${greeting.greeting_score}/100).`)
-      }
-    }
-
-    return parts.join(' ')
-  }
-
-  const buildFallbackAction = () => {
-    const sev = severity || 'NORMAL'
-    if (sev === 'CRITICAL') {
-      return 'Suspend officer pending investigation. Forward recording to Internal Affairs for disciplinary review. Schedule mandatory retraining on professional conduct, de-escalation, and anti-corruption protocols.'
-    }
-    if (sev === 'WARNING') {
-      return 'Issue a formal warning to the officer. Schedule retraining on professional communication, de-escalation techniques, and respectful public interaction. Review additional body-camera footage for similar patterns.'
-    }
-    return 'No disciplinary action required. Continue routine monitoring and encourage the officer to maintain professional standards.'
-  }
-
-  const summary = oa.summary || assessment || buildFallbackSummary()
-  const action = oa.recommended_action || buildFallbackAction()
-  const classification = (oa.classification || (severity === 'CRITICAL' ? 'critical' : severity === 'WARNING' ? 'unprofessional' : 'normal')).toLowerCase()
-  const cls = CLASS_COLOR[classification] || { fg:'#8B5CF6', label:(oa.classification || classification || 'ANALYZED').toUpperCase() }
-  const risk = typeof oa.risk_score === 'number' ? oa.risk_score : (typeof totalScore === 'number' ? totalScore : null)
+  const summary = oa.summary || assessment || ''
+  const action = oa.recommended_action || ''
+  const classification = (oa.classification || '').toLowerCase()
+  const cls = CLASS_COLOR[classification] || { fg:'#8B5CF6', label:(oa.classification || 'ANALYZED').toUpperCase() }
+  const risk = typeof oa.risk_score === 'number' ? oa.risk_score : null
 
   const detectedList = [
     { key:'vulgar_language',       label:'Vulgar / Abusive Language' },
@@ -666,8 +615,8 @@ function GeminiAssessment({ assessment, analysis, greeting, behavior, severity, 
 
   const greetingMissing = greeting && greeting.greeting_compliance === 'MISSING'
   const greetingPartial = greeting && greeting.greeting_compliance === 'PARTIAL'
-  const isFlagged = oa.is_flagged !== undefined ? oa.is_flagged : (severity === 'CRITICAL' || severity === 'WARNING')
-  const usingFallback = !oa.summary && !assessment
+
+  if (!summary && !action && detectedList.length === 0 && risk === null && !greetingMissing && !greetingPartial) return null
 
   return (
     <div style={{ background:'linear-gradient(135deg, rgba(139,92,246,0.08), rgba(59,130,246,0.08))',
@@ -688,7 +637,7 @@ function GeminiAssessment({ assessment, analysis, greeting, behavior, severity, 
           </div>
           <div style={{ fontSize:'10px', color:'#64748B', fontWeight:600,
             letterSpacing:'0.07em', textTransform:'uppercase' }}>
-            {usingFallback ? 'Local Analysis — Gemini Unavailable' : 'Gemini Multimodal Audio Analysis'}
+            Gemini Multimodal Audio Analysis
           </div>
         </div>
         {risk !== null && (
@@ -740,29 +689,6 @@ function GeminiAssessment({ assessment, analysis, greeting, behavior, severity, 
           </div>
         )}
 
-        {detectedList.length === 0 && (violations || []).length > 0 && (
-          <div style={{ fontSize:'13px', color:'#1F2937', lineHeight:1.7,
-            marginBottom:'14px', background:'#FFF5F5', borderRadius:'8px',
-            padding:'10px 14px', borderLeft:'3px solid #DC2626' }}>
-            <span style={{ color:'#DC2626', fontWeight:800 }}>Violations Detected: </span>
-            {(violations || []).length} violation{(violations || []).length === 1 ? '' : 's'} found in the officer's voice —{' '}
-            {[...new Set((violations || []).map(v => v.type))].map((t, i, arr) => (
-              <span key={t}>
-                <strong>{t}</strong>{i < arr.length - 1 ? ', ' : '.'}
-              </span>
-            ))}
-          </div>
-        )}
-
-        {detectedList.length === 0 && (violations || []).length === 0 && !greetingMissing && !greetingPartial && (
-          <div style={{ fontSize:'13px', color:'#1F2937', lineHeight:1.7,
-            marginBottom:'14px', background:'#F0FDF4', borderRadius:'8px',
-            padding:'10px 14px', borderLeft:'3px solid #10B981' }}>
-            <span style={{ color:'#047857', fontWeight:800 }}>No Violations: </span>
-            The officer's voice showed no signs of abusive language, aggressive tone, threats, or bribery indicators during this interaction.
-          </div>
-        )}
-
         {(greetingMissing || greetingPartial) && (
           <div style={{ fontSize:'13px', color:'#1F2937', lineHeight:1.7,
             marginBottom:'14px',
@@ -789,7 +715,7 @@ function GeminiAssessment({ assessment, analysis, greeting, behavior, severity, 
           </div>
         )}
 
-        {isFlagged && (
+        {oa.is_flagged && (
           <div style={{ marginTop:'12px', display:'inline-block',
             background:'rgba(239,68,68,0.12)', border:'1px solid rgba(239,68,68,0.3)',
             color:'#DC2626', fontSize:'10px', fontWeight:700, letterSpacing:'0.08em',
@@ -963,6 +889,222 @@ function GreetingPanel({ greeting }) {
           ))}
         </div>
       )}
+    </div>
+  )
+}
+
+
+function MediaPlayer({ file, url, diarization }) {
+  const mediaRef = useRef(null)
+  const [playing, setPlaying] = useState(false)
+  const [currentTime, setCurrentTime] = useState(0)
+  const [duration, setDuration] = useState(0)
+  const [currentSpeaker, setCurrentSpeaker] = useState(null)
+  const isVideo = file?.type?.startsWith('video')
+
+  const togglePlay = () => {
+    const m = mediaRef.current
+    if (!m) return
+    if (playing) { m.pause() } else { m.play() }
+  }
+
+  const onTimeUpdate = () => {
+    const t = mediaRef.current?.currentTime || 0
+    setCurrentTime(t)
+    if (diarization?.segments?.length) {
+      const seg = diarization.segments.find(s => t >= s.start && t <= s.end)
+      setCurrentSpeaker(seg?.speaker || null)
+    }
+  }
+
+  const onLoadedMeta = () => setDuration(mediaRef.current?.duration || 0)
+
+  const seek = e => {
+    const bar = e.currentTarget.getBoundingClientRect()
+    const pct = (e.clientX - bar.left) / bar.width
+    if (mediaRef.current && duration > 0) {
+      mediaRef.current.currentTime = Math.max(0, Math.min(duration, pct * duration))
+    }
+  }
+
+  const jumpToSpeaker = (spk) => {
+    const seg = diarization?.segments?.find(s => s.speaker === spk)
+    if (seg && mediaRef.current) {
+      mediaRef.current.currentTime = seg.start
+      if (!playing) mediaRef.current.play()
+    }
+  }
+
+  const fmt = s => {
+    if (!s || !isFinite(s)) return '0:00'
+    const m = Math.floor(s / 60), ss = Math.floor(s % 60)
+    return `${m}:${ss.toString().padStart(2, '0')}`
+  }
+
+  const segs = diarization?.segments || []
+  const totalDur = duration || segs[segs.length-1]?.end || 1
+
+  return (
+    <div style={CARD}>
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'10px' }}>
+        <span style={LABEL}>{isVideo ? '🎬' : '🎙'} Media Player</span>
+        {currentSpeaker && (
+          <span style={{ fontSize:'10px', fontWeight:800, padding:'3px 10px', borderRadius:'6px',
+            background: currentSpeaker === 'EO' ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)',
+            color: currentSpeaker === 'EO' ? '#10B981' : '#EF4444',
+            border: `1px solid ${currentSpeaker === 'EO' ? 'rgba(16,185,129,0.35)' : 'rgba(239,68,68,0.35)'}`,
+            letterSpacing:'0.06em' }}>
+            🔊 {currentSpeaker === 'EO' ? 'PERSON 1 · EO' : 'PERSON 2 · CUSTOMER'}
+          </span>
+        )}
+      </div>
+
+      <div style={{ background:'#000', borderRadius:'10px', overflow:'hidden', marginBottom:'10px',
+        aspectRatio: isVideo ? '16/9' : 'auto' }}>
+        {isVideo ? (
+          <video ref={mediaRef} src={url}
+            onPlay={()=>setPlaying(true)} onPause={()=>setPlaying(false)}
+            onTimeUpdate={onTimeUpdate} onLoadedMetadata={onLoadedMeta}
+            style={{ width:'100%', height:'100%', display:'block', background:'#000' }}/>
+        ) : (
+          <>
+            <audio ref={mediaRef} src={url}
+              onPlay={()=>setPlaying(true)} onPause={()=>setPlaying(false)}
+              onTimeUpdate={onTimeUpdate} onLoadedMetadata={onLoadedMeta}
+              style={{ display:'none' }}/>
+            <div style={{ padding:'28px 16px', display:'flex', alignItems:'center', justifyContent:'center',
+              background:'linear-gradient(135deg, #0B0F1A, #111827)', minHeight:'90px' }}>
+              <div style={{ fontSize:'40px', color: playing ? '#10B981' : '#3B82F6', opacity: playing ? 1 : 0.5 }}>
+                {playing ? '▶' : '♪'}
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+
+      <div onClick={seek} style={{ position:'relative', height:'22px', background:'#0B0F1A',
+        borderRadius:'6px', cursor:'pointer', overflow:'hidden', marginBottom:'8px',
+        border:'1px solid #1F2937' }}>
+        {segs.map((s, i) => {
+          const left = (s.start / totalDur) * 100
+          const width = ((s.end - s.start) / totalDur) * 100
+          return (
+            <div key={i} style={{ position:'absolute', left:`${left}%`, width:`${width}%`,
+              top:0, bottom:0,
+              background: s.speaker === 'EO' ? 'rgba(16,185,129,0.45)' : 'rgba(239,68,68,0.45)' }}/>
+          )
+        })}
+        <div style={{ position:'absolute', top:0, bottom:0, left:0,
+          width:`${(currentTime / (totalDur || 1)) * 100}%`,
+          background:'rgba(59,130,246,0.25)',
+          borderRight: currentTime > 0 ? '2px solid #3B82F6' : 'none',
+          pointerEvents:'none' }}/>
+      </div>
+
+      <div style={{ display:'flex', alignItems:'center', gap:'10px' }}>
+        <button onClick={togglePlay} style={{
+          background: playing ? 'linear-gradient(135deg, #EF4444, #DC2626)' : 'linear-gradient(135deg, #3B82F6, #2563EB)',
+          color:'#fff', border:'none', borderRadius:'8px', padding:'8px 14px',
+          fontSize:'13px', fontWeight:800, cursor:'pointer', minWidth:'70px' }}>
+          {playing ? '⏸ Pause' : '▶ Play'}
+        </button>
+        <span style={{ fontSize:'11px', color:'#94A3B8', fontWeight:600,
+          fontFamily:'ui-monospace, monospace' }}>
+          {fmt(currentTime)} / {fmt(totalDur)}
+        </span>
+      </div>
+
+      {segs.length > 0 && (
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'6px', marginTop:'10px' }}>
+          <button onClick={() => jumpToSpeaker('EO')} style={{
+            background:'rgba(16,185,129,0.1)', border:'1px solid rgba(16,185,129,0.3)',
+            color:'#10B981', borderRadius:'8px', padding:'8px', fontSize:'11px',
+            fontWeight:700, cursor:'pointer', textAlign:'left' }}>
+            <div>👮 Person 1 (EO)</div>
+            <div style={{ fontSize:'9px', color:'#64748B', marginTop:'2px' }}>
+              {diarization?.eo_total_sec || 0}s · {diarization?.eo_segments_count || 0} parts
+            </div>
+          </button>
+          <button onClick={() => jumpToSpeaker('Customer')} style={{
+            background:'rgba(239,68,68,0.08)', border:'1px solid rgba(239,68,68,0.25)',
+            color:'#F87171', borderRadius:'8px', padding:'8px', fontSize:'11px',
+            fontWeight:700, cursor:'pointer', textAlign:'left' }}>
+            <div>👤 Person 2 (Customer)</div>
+            <div style={{ fontSize:'9px', color:'#64748B', marginTop:'2px' }}>
+              {diarization?.customer_total_sec || 0}s · {diarization?.customer_segments_count || 0} parts
+            </div>
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+
+function SpeakerDiarizationPanel({ diarization }) {
+  if (!diarization || !diarization.segments || diarization.segments.length === 0) return null
+  const d = diarization
+  const totalSpoken = (d.eo_total_sec || 0) + (d.customer_total_sec || 0)
+  const eoPct = totalSpoken > 0 ? ((d.eo_total_sec / totalSpoken) * 100).toFixed(0) : 0
+  const custPct = totalSpoken > 0 ? ((d.customer_total_sec / totalSpoken) * 100).toFixed(0) : 0
+
+  return (
+    <div style={CARD}>
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'12px' }}>
+        <span style={LABEL}>🗣 Speaker Detection (Voice Diarization)</span>
+        <span style={{ fontSize:'10px', fontWeight:700, color:'#94A3B8',
+          background:'rgba(148,163,184,0.1)', padding:'3px 10px', borderRadius:'6px' }}>
+          {d.speaker_count} speaker{d.speaker_count === 1 ? '' : 's'} detected
+        </span>
+      </div>
+
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px', marginBottom:'12px' }}>
+        <div style={{ background:'rgba(16,185,129,0.06)', border:'1px solid rgba(16,185,129,0.25)',
+          borderRadius:'12px', padding:'14px' }}>
+          <div style={{ display:'flex', alignItems:'center', gap:'8px', marginBottom:'8px' }}>
+            <span style={{ fontSize:'18px' }}>👮</span>
+            <span style={{ fontSize:'12px', fontWeight:800, color:'#10B981', letterSpacing:'0.05em' }}>
+              PERSON 1 — EO
+            </span>
+          </div>
+          <div style={{ fontSize:'22px', fontWeight:900, color:'#10B981', lineHeight:1 }}>
+            {d.eo_total_sec || 0}<span style={{ fontSize:'12px', color:'#64748B', fontWeight:600 }}>s</span>
+          </div>
+          <div style={{ fontSize:'10px', color:'#64748B', marginTop:'4px' }}>
+            {eoPct}% of speech · {d.eo_segments_count} segment{d.eo_segments_count === 1 ? '' : 's'}
+          </div>
+        </div>
+
+        <div style={{ background:'rgba(239,68,68,0.05)', border:'1px solid rgba(239,68,68,0.2)',
+          borderRadius:'12px', padding:'14px' }}>
+          <div style={{ display:'flex', alignItems:'center', gap:'8px', marginBottom:'8px' }}>
+            <span style={{ fontSize:'18px' }}>👤</span>
+            <span style={{ fontSize:'12px', fontWeight:800, color:'#F87171', letterSpacing:'0.05em' }}>
+              PERSON 2 — CUSTOMER
+            </span>
+          </div>
+          <div style={{ fontSize:'22px', fontWeight:900, color:'#F87171', lineHeight:1 }}>
+            {d.customer_total_sec || 0}<span style={{ fontSize:'12px', color:'#64748B', fontWeight:600 }}>s</span>
+          </div>
+          <div style={{ fontSize:'10px', color:'#64748B', marginTop:'4px' }}>
+            {custPct}% of speech · {d.customer_segments_count} segment{d.customer_segments_count === 1 ? '' : 's'}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ height:'10px', background:'#0B0F1A', borderRadius:'5px', overflow:'hidden',
+        display:'flex', border:'1px solid #1F2937', marginBottom:'12px' }}>
+        <div style={{ width:`${eoPct}%`, background:'linear-gradient(90deg, #10B981, #059669)' }}/>
+        <div style={{ width:`${custPct}%`, background:'linear-gradient(90deg, #EF4444, #DC2626)' }}/>
+      </div>
+
+      <div style={{ fontSize:'11px', color:'#64748B', lineHeight:1.6,
+        background:'#0B0F1A', borderRadius:'8px', padding:'10px 12px',
+        border:'1px solid #1F2937' }}>
+        <strong style={{ color:'#94A3B8' }}>Note:</strong> Voice analysis and violations are scored
+        only from <strong style={{ color:'#10B981' }}>Person 1 (EO)</strong> — Person 2 (Customer) is
+        shown for context and is never scored as an officer violation.
+      </div>
     </div>
   )
 }

@@ -172,6 +172,114 @@ def identify_eo_audio(audio, sr, speech_segs):
     return eo, float(np.mean(sims)) if sims else 0.0, float(np.max(sims)) if sims else 0.0
 
 
+def diarize_speakers(audio, sr, speech_segs):
+    """Speaker diarization — labels each speech segment as EO (Person 1) or Customer (Person 2).
+
+    Uses the same voiceprint matching logic as identify_eo_audio() but at the segment level
+    to produce timestamped speaker labels. Does NOT modify any existing analysis logic —
+    this is an additive feature for display/UI purposes only.
+
+    Returns a dict with:
+        - segments: list of {start, end, speaker, similarity, duration}
+        - eo_total_sec: total seconds EO spoke
+        - customer_total_sec: total seconds Customer spoke
+        - speaker_count: 1 (only EO) or 2 (EO + Customer)
+    """
+    window = sr * 2
+    hop = window // 2
+    seg_labels = []
+    eo_total = 0.0
+    cust_total = 0.0
+
+    for seg in speech_segs:
+        seg_start = float(seg["start"])
+        seg_end = float(seg["end"])
+        sa = audio[int(seg_start * sr):int(seg_end * sr)]
+        seg_dur = seg_end - seg_start
+
+        if len(sa) < window:
+            # Short segment — classify whole thing
+            vec = extract_features(sa, sr) if len(sa) > sr * 0.3 else None
+            sim = cosine_sim(EO_VECTOR, vec) if vec is not None else 0.0
+            speaker = "EO" if sim >= EO_THRESHOLD else "Customer"
+            seg_labels.append({
+                "start": round(seg_start, 2),
+                "end": round(seg_end, 2),
+                "duration": round(seg_dur, 2),
+                "speaker": speaker,
+                "similarity": round(float(sim), 3),
+            })
+            if speaker == "EO":
+                eo_total += seg_dur
+            else:
+                cust_total += seg_dur
+            continue
+
+        # Long segment — slide windows and group consecutive same-speaker windows
+        current_speaker = None
+        current_start = seg_start
+        current_sims = []
+
+        for w in range(0, len(sa) - window + 1, hop):
+            chunk = sa[w:w + window]
+            vec = extract_features(chunk, sr)
+            sim = float(cosine_sim(EO_VECTOR, vec))
+            speaker = "EO" if sim >= EO_THRESHOLD else "Customer"
+            chunk_start_abs = seg_start + (w / sr)
+
+            if current_speaker is None:
+                current_speaker = speaker
+                current_start = chunk_start_abs
+                current_sims = [sim]
+            elif speaker != current_speaker:
+                # Flush previous run
+                chunk_end_abs = chunk_start_abs
+                d = chunk_end_abs - current_start
+                if d > 0.1:
+                    seg_labels.append({
+                        "start": round(current_start, 2),
+                        "end": round(chunk_end_abs, 2),
+                        "duration": round(d, 2),
+                        "speaker": current_speaker,
+                        "similarity": round(float(np.mean(current_sims)), 3),
+                    })
+                    if current_speaker == "EO":
+                        eo_total += d
+                    else:
+                        cust_total += d
+                current_speaker = speaker
+                current_start = chunk_start_abs
+                current_sims = [sim]
+            else:
+                current_sims.append(sim)
+
+        # Flush last run
+        if current_speaker is not None:
+            d = seg_end - current_start
+            if d > 0.1:
+                seg_labels.append({
+                    "start": round(current_start, 2),
+                    "end": round(seg_end, 2),
+                    "duration": round(d, 2),
+                    "speaker": current_speaker,
+                    "similarity": round(float(np.mean(current_sims)), 3),
+                })
+                if current_speaker == "EO":
+                    eo_total += d
+                else:
+                    cust_total += d
+
+    speaker_count = 1 if cust_total < 0.5 else 2
+    return {
+        "segments": seg_labels,
+        "eo_total_sec": round(eo_total, 1),
+        "customer_total_sec": round(cust_total, 1),
+        "speaker_count": speaker_count,
+        "eo_segments_count": sum(1 for s in seg_labels if s["speaker"] == "EO"),
+        "customer_segments_count": sum(1 for s in seg_labels if s["speaker"] == "Customer"),
+    }
+
+
 # ═══════════════════════════════════════════════════════════════
 #  TRANSCRIPTION — faster-whisper (primary) + Google Speech (fallback)
 # ═══════════════════════════════════════════════════════════════
@@ -1909,6 +2017,15 @@ def run_analysis(audio, sr, officer_id="EO_001", source="upload", filename=""):
     eo_detected = len(eo_audio) >= sr * CONFIG["min_eo_audio_sec"]
     eo_duration = len(eo_audio) / sr if len(eo_audio) > 0 else 0.0
 
+    # Speaker diarization — Person 1 (EO) vs Person 2 (Customer) timestamps for UI.
+    # Additive only: does NOT affect transcription, tone, keyword, or scoring logic.
+    try:
+        diarization = diarize_speakers(audio, sr, speech_segs)
+    except Exception as _diar_err:
+        print(f"  [diarize] error: {_diar_err}", flush=True)
+        diarization = {"segments": [], "eo_total_sec": 0.0, "customer_total_sec": 0.0,
+                       "speaker_count": 1, "eo_segments_count": 0, "customer_segments_count": 0}
+
     analyze_audio = eo_audio if eo_detected and len(eo_audio) > sr * 0.3 else audio
 
     print(f"  Transcribing ({len(analyze_audio)/sr:.1f}s)...", flush=True)
@@ -2036,6 +2153,7 @@ def run_analysis(audio, sr, officer_id="EO_001", source="upload", filename=""):
         "transcription_method": transcription_method,
         "transcript_source":    "auto_voice_detection",
         "greeting":             greeting_info,
+        "diarization":          diarization,
         "tone_label":           tone_label,
         "tone_proba":           tone_proba,
         "tone_percents":        tone_percents,
