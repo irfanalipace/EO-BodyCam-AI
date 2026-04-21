@@ -950,9 +950,9 @@ function MediaPlayer({ file, url, diarization }) {
         <span style={LABEL}>{isVideo ? '🎬' : '🎙'} Media Player</span>
         {currentSpeaker && (
           <span style={{ fontSize:'10px', fontWeight:800, padding:'3px 10px', borderRadius:'6px',
-            background: currentSpeaker === 'EO' ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)',
-            color: currentSpeaker === 'EO' ? '#10B981' : '#EF4444',
-            border: `1px solid ${currentSpeaker === 'EO' ? 'rgba(16,185,129,0.35)' : 'rgba(239,68,68,0.35)'}`,
+            background: currentSpeaker === 'EO' ? 'rgba(239,68,68,0.15)' : 'rgba(16,185,129,0.15)',
+            color: currentSpeaker === 'EO' ? '#EF4444' : '#10B981',
+            border: `1px solid ${currentSpeaker === 'EO' ? 'rgba(239,68,68,0.35)' : 'rgba(16,185,129,0.35)'}`,
             letterSpacing:'0.06em' }}>
             🔊 {currentSpeaker === 'EO' ? 'PERSON 1 · EO' : 'PERSON 2 · CUSTOMER'}
           </span>
@@ -991,7 +991,7 @@ function MediaPlayer({ file, url, diarization }) {
           return (
             <div key={i} style={{ position:'absolute', left:`${left}%`, width:`${width}%`,
               top:0, bottom:0,
-              background: s.speaker === 'EO' ? 'rgba(16,185,129,0.45)' : 'rgba(239,68,68,0.45)' }}/>
+              background: s.speaker === 'EO' ? 'rgba(239,68,68,0.45)' : 'rgba(16,185,129,0.45)' }}/>
           )
         })}
         <div style={{ position:'absolute', top:0, bottom:0, left:0,
@@ -1017,8 +1017,8 @@ function MediaPlayer({ file, url, diarization }) {
       {segs.length > 0 && (
         <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'6px', marginTop:'10px' }}>
           <button onClick={() => jumpToSpeaker('EO')} style={{
-            background:'rgba(16,185,129,0.1)', border:'1px solid rgba(16,185,129,0.3)',
-            color:'#10B981', borderRadius:'8px', padding:'8px', fontSize:'11px',
+            background:'rgba(239,68,68,0.1)', border:'1px solid rgba(239,68,68,0.3)',
+            color:'#EF4444', borderRadius:'8px', padding:'8px', fontSize:'11px',
             fontWeight:700, cursor:'pointer', textAlign:'left' }}>
             <div>👮 Person 1 (EO)</div>
             <div style={{ fontSize:'9px', color:'#64748B', marginTop:'2px' }}>
@@ -1026,8 +1026,8 @@ function MediaPlayer({ file, url, diarization }) {
             </div>
           </button>
           <button onClick={() => jumpToSpeaker('Customer')} style={{
-            background:'rgba(239,68,68,0.08)', border:'1px solid rgba(239,68,68,0.25)',
-            color:'#F87171', borderRadius:'8px', padding:'8px', fontSize:'11px',
+            background:'rgba(16,185,129,0.08)', border:'1px solid rgba(16,185,129,0.25)',
+            color:'#10B981', borderRadius:'8px', padding:'8px', fontSize:'11px',
             fontWeight:700, cursor:'pointer', textAlign:'left' }}>
             <div>👤 Person 2 (Customer)</div>
             <div style={{ fontSize:'9px', color:'#64748B', marginTop:'2px' }}>
@@ -1059,15 +1059,15 @@ function SpeakerDiarizationPanel({ diarization }) {
       </div>
 
       <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px', marginBottom:'12px' }}>
-        <div style={{ background:'rgba(16,185,129,0.06)', border:'1px solid rgba(16,185,129,0.25)',
+        <div style={{ background:'rgba(239,68,68,0.06)', border:'1px solid rgba(239,68,68,0.25)',
           borderRadius:'12px', padding:'14px' }}>
           <div style={{ display:'flex', alignItems:'center', gap:'8px', marginBottom:'8px' }}>
             <span style={{ fontSize:'18px' }}>👮</span>
-            <span style={{ fontSize:'12px', fontWeight:800, color:'#10B981', letterSpacing:'0.05em' }}>
+            <span style={{ fontSize:'12px', fontWeight:800, color:'#EF4444', letterSpacing:'0.05em' }}>
               PERSON 1 — EO
             </span>
           </div>
-          <div style={{ fontSize:'22px', fontWeight:900, color:'#10B981', lineHeight:1 }}>
+          <div style={{ fontSize:'22px', fontWeight:900, color:'#EF4444', lineHeight:1 }}>
             {d.eo_total_sec || 0}<span style={{ fontSize:'12px', color:'#64748B', fontWeight:600 }}>s</span>
           </div>
           <div style={{ fontSize:'10px', color:'#64748B', marginTop:'4px' }}>
@@ -1075,15 +1075,15 @@ function SpeakerDiarizationPanel({ diarization }) {
           </div>
         </div>
 
-        <div style={{ background:'rgba(239,68,68,0.05)', border:'1px solid rgba(239,68,68,0.2)',
+        <div style={{ background:'rgba(16,185,129,0.05)', border:'1px solid rgba(16,185,129,0.2)',
           borderRadius:'12px', padding:'14px' }}>
           <div style={{ display:'flex', alignItems:'center', gap:'8px', marginBottom:'8px' }}>
             <span style={{ fontSize:'18px' }}>👤</span>
-            <span style={{ fontSize:'12px', fontWeight:800, color:'#F87171', letterSpacing:'0.05em' }}>
+            <span style={{ fontSize:'12px', fontWeight:800, color:'#10B981', letterSpacing:'0.05em' }}>
               PERSON 2 — CUSTOMER
             </span>
           </div>
-          <div style={{ fontSize:'22px', fontWeight:900, color:'#F87171', lineHeight:1 }}>
+          <div style={{ fontSize:'22px', fontWeight:900, color:'#10B981', lineHeight:1 }}>
             {d.customer_total_sec || 0}<span style={{ fontSize:'12px', color:'#64748B', fontWeight:600 }}>s</span>
           </div>
           <div style={{ fontSize:'10px', color:'#64748B', marginTop:'4px' }}>
@@ -1094,15 +1094,15 @@ function SpeakerDiarizationPanel({ diarization }) {
 
       <div style={{ height:'10px', background:'#0B0F1A', borderRadius:'5px', overflow:'hidden',
         display:'flex', border:'1px solid #1F2937', marginBottom:'12px' }}>
-        <div style={{ width:`${eoPct}%`, background:'linear-gradient(90deg, #10B981, #059669)' }}/>
-        <div style={{ width:`${custPct}%`, background:'linear-gradient(90deg, #EF4444, #DC2626)' }}/>
+        <div style={{ width:`${eoPct}%`, background:'linear-gradient(90deg, #EF4444, #DC2626)' }}/>
+        <div style={{ width:`${custPct}%`, background:'linear-gradient(90deg, #10B981, #059669)' }}/>
       </div>
 
       <div style={{ fontSize:'11px', color:'#64748B', lineHeight:1.6,
         background:'#0B0F1A', borderRadius:'8px', padding:'10px 12px',
         border:'1px solid #1F2937' }}>
         <strong style={{ color:'#94A3B8' }}>Note:</strong> Voice analysis and violations are scored
-        only from <strong style={{ color:'#10B981' }}>Person 1 (EO)</strong> — Person 2 (Customer) is
+        only from <strong style={{ color:'#EF4444' }}>Person 1 (EO)</strong> — Person 2 (Customer) is
         shown for context and is never scored as an officer violation.
       </div>
     </div>
