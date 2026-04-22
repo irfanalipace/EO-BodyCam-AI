@@ -428,6 +428,11 @@ function ResultPanel({ result: r }) {
         violations={r.violations}
       />
 
+      {/* 🎥 VISUAL ANALYSIS — shown for all video uploads (even on analysis failure) */}
+      {r.media_type === 'video' && (
+        <VisualAnalysisPanel data={r.video_analysis}/>
+      )}
+
       {/* Violations Detail */}
       <div style={CARD}>
         <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'10px' }}>
@@ -642,8 +647,16 @@ function GeminiAssessment({ assessment, analysis, greeting, violations }) {
 
   const greetingMissing = greeting && greeting.greeting_compliance === 'MISSING'
   const greetingPartial = greeting && greeting.greeting_compliance === 'PARTIAL'
+  const hasViolations = Array.isArray(violations) && violations.length > 0
 
-  if (!summary && !action && detectedList.length === 0 && risk === null && !greetingMissing && !greetingPartial) return null
+  // Only hide the card when there is truly nothing to show — neither a Gemini narrative,
+  // nor raw Gemini detections, nor a risk score, nor a greeting issue, nor any violations
+  // from the audio pipeline. Previously this guard ignored the violations list, so the
+  // card would vanish whenever Gemini's full-analysis call failed — even though violations
+  // had been found. The result was a blank "Officer Behavior Assessment" area for videos
+  // where Gemini quota/timeouts blocked the full-analysis response.
+  if (!summary && !action && detectedList.length === 0 && risk === null
+      && !greetingMissing && !greetingPartial && !hasViolations) return null
 
   return (
     <div style={{ background:'linear-gradient(135deg, rgba(139,92,246,0.08), rgba(59,130,246,0.08))',
@@ -768,12 +781,17 @@ function GeminiAssessment({ assessment, analysis, greeting, violations }) {
       </div>
 
       {/* Fallback narrative — shown when Gemini's summary is empty/truncated so the card
-          is never blank for demos. */}
-      {!summary && (assessment || oa.recommended_action) && (
-        <div style={{ marginTop:'10px', fontSize:'11px', color:'#64748B',
-          fontStyle:'italic', background:'rgba(245,158,11,0.06)',
-          border:'1px solid rgba(245,158,11,0.2)', borderRadius:'8px', padding:'8px 12px' }}>
-          AI narrative summary is unavailable for this recording. See violation list below for details.
+          is never blank for demos. Also triggers when there are violations but Gemini's
+          full-analysis and assess-behavior calls both returned empty (quota/timeout/etc.). */}
+      {!summary && (assessment || oa.recommended_action || hasViolations) && (
+        <div style={{ marginTop:'10px', fontSize:'12px', color:'#92400E',
+          background:'rgba(245,158,11,0.08)',
+          border:'1px solid rgba(245,158,11,0.3)', borderRadius:'8px', padding:'10px 14px',
+          lineHeight:1.5 }}>
+          <strong>AI narrative summary unavailable.</strong>{' '}
+          {hasViolations
+            ? `${violations.length} violation${violations.length === 1 ? '' : 's'} were detected by the audio pipeline — see full list below.`
+            : 'Gemini did not return an assessment for this recording — check backend logs.'}
         </div>
       )}
 
@@ -1208,6 +1226,129 @@ function SpeakerDiarizationPanel({ diarization }) {
         only from <strong style={{ color:'#EF4444' }}>Person 1 (EO)</strong> — Person 2 (Customer) is
         shown for context and is never scored as an officer violation.
       </div>
+    </div>
+  )
+}
+
+
+function VisualAnalysisPanel({ data }) {
+  const d = data || {}
+  const status = d._status || (data ? 'ok' : 'missing')
+  const statusMsg = d._status_message || ''
+  const rows = [
+    { key:'bribery_visual',     icon:'💵', title:'Cash / Object Exchange',    color:'#DC2626' },
+    { key:'aggressive_posture', icon:'🗯️', title:'Aggressive Body Language',  color:'#F97316' },
+    { key:'physical_contact',   icon:'✋', title:'Physical Contact',          color:'#EF4444' },
+    { key:'concealed_gestures', icon:'🤐', title:'Concealed / Hidden Gestures', color:'#A855F7' },
+  ]
+  const anyDetected = rows.some(r => d[r.key]?.detected)
+  const risk = typeof d.risk_score === 'number' ? d.risk_score : null
+  const summary = d.visual_summary || ''
+
+  return (
+    <div style={{ background:'linear-gradient(135deg, rgba(59,130,246,0.08), rgba(139,92,246,0.08))',
+      border:'1px solid rgba(59,130,246,0.25)', borderRadius:'16px',
+      padding:'22px', marginBottom:'14px' }}>
+
+      <div style={{ display:'flex', alignItems:'center', gap:'12px', marginBottom:'14px' }}>
+        <div style={{ width:40, height:40, borderRadius:'10px',
+          background:'linear-gradient(135deg, #3B82F6, #8B5CF6)',
+          display:'flex', alignItems:'center', justifyContent:'center',
+          boxShadow:'0 2px 8px rgba(59,130,246,0.3)' }}>
+          <span style={{ fontSize:'20px' }}>🎥</span>
+        </div>
+        <div style={{ flex:1 }}>
+          <div style={{ fontSize:'15px', fontWeight:800, color:'#3B82F6', letterSpacing:'-0.01em' }}>
+            Visual Analysis (Video Frames)
+          </div>
+          <div style={{ fontSize:'10px', color:'#64748B', fontWeight:600,
+            letterSpacing:'0.07em', textTransform:'uppercase' }}>
+            Gemini Vision · Body Language & Object Detection
+          </div>
+        </div>
+        {risk !== null && (
+          <div style={{ textAlign:'right' }}>
+            <div style={{ fontSize:'26px', fontWeight:900,
+              color: risk >= 70 ? '#DC2626' : risk >= 30 ? '#F59E0B' : '#10B981', lineHeight:1 }}>
+              {risk}<span style={{ fontSize:'12px', color:'#64748B', fontWeight:600 }}>/100</span>
+            </div>
+            <div style={{ fontSize:'10px', fontWeight:800,
+              color: risk >= 70 ? '#DC2626' : risk >= 30 ? '#F59E0B' : '#10B981',
+              letterSpacing:'0.08em', marginTop:'2px' }}>
+              VISUAL RISK
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Status banner — visible when Gemini visual analysis didn't return data */}
+      {status !== 'ok' && (
+        <div style={{ background:'rgba(245,158,11,0.10)', border:'1px solid rgba(245,158,11,0.35)',
+          borderRadius:'10px', padding:'12px 14px', marginBottom:'14px',
+          fontSize:'12px', color:'#92400E', lineHeight:1.5 }}>
+          <strong>Visual analysis unavailable.</strong>{' '}
+          {status === 'missing' && 'Backend response did not include video_analysis — restart the backend to load the new code.'}
+          {status === 'empty'   && (statusMsg || 'Gemini returned no data — check backend logs.')}
+          {status === 'error'   && `Error: ${statusMsg || 'unknown'}`}
+        </div>
+      )}
+
+      {summary && (
+        <div style={{ background:'#F8FAF7', borderRadius:'12px', padding:'14px 18px',
+          fontSize:'13px', color:'#374151', lineHeight:1.7, marginBottom:'14px' }}>
+          {summary}
+        </div>
+      )}
+
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px' }}>
+        {rows.map(r => {
+          const cat = d[r.key] || {}
+          const detected = !!cat.detected
+          const conf = typeof cat.confidence === 'number' ? cat.confidence : null
+          const instances = cat.instances || []
+          return (
+            <div key={r.key} style={{ background:'#0B0F1A', borderRadius:'12px', padding:'14px 16px',
+              border:`1px solid ${detected ? 'rgba(239,68,68,0.35)' : '#1F2937'}` }}>
+              <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'6px' }}>
+                <div style={{ display:'flex', alignItems:'center', gap:'8px' }}>
+                  <span style={{ fontSize:'16px' }}>{r.icon}</span>
+                  <span style={{ fontSize:'12px', fontWeight:700, color:'#F1F5F9' }}>{r.title}</span>
+                </div>
+                {conf !== null && detected && (
+                  <span style={{ fontSize:'10px', color:'#94A3B8', fontWeight:700 }}>{conf}% conf</span>
+                )}
+              </div>
+              <div style={{ fontSize:'11px', fontWeight:700,
+                color: detected ? '#EF4444' : '#10B981', letterSpacing:'0.04em', marginBottom:'6px' }}>
+                {detected ? `● DETECTED · ${(cat.severity || 'low').toUpperCase()}` : '○ NOT DETECTED'}
+              </div>
+              {detected && instances.length > 0 && (
+                <div style={{ borderTop:'1px solid #1F2937', paddingTop:'8px',
+                  display:'flex', flexDirection:'column', gap:'6px',
+                  maxHeight:'140px', overflowY:'auto' }}>
+                  {instances.slice(0,4).map((inst, i) => (
+                    <div key={i} style={{ fontSize:'11px', color:'#94A3B8', lineHeight:1.5 }}>
+                      <div style={{ color:'#E2E8F0' }}>{inst.description || '—'}</div>
+                      {(inst.timestamp_approx || inst.type) && (
+                        <div style={{ color:'#64748B', marginTop:'2px', fontSize:'10px' }}>
+                          {inst.type || ''}{inst.timestamp_approx ? ` · ${inst.timestamp_approx}` : ''}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+
+      {status === 'ok' && !anyDetected && (
+        <div style={{ marginTop:'10px', fontSize:'11px', color:'#64748B',
+          fontStyle:'italic', textAlign:'center' }}>
+          No visual misconduct indicators detected in the video frames.
+        </div>
+      )}
     </div>
   )
 }

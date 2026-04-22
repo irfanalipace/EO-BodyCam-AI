@@ -464,8 +464,12 @@ def _strip_llm_commentary(text):
     return out
 
 
-def _gemini_upload_file(key, audio_path):
-    """Upload an audio file to Gemini's Files API. Returns the file URI on success, or ''."""
+def _gemini_upload_file(key, audio_path, mime_type="audio/wav"):
+    """Upload a media file (audio or video) to Gemini's Files API.
+
+    Returns the file URI on success, or ''. Pass mime_type for video uploads,
+    e.g. 'video/mp4', 'video/webm'.
+    """
     import requests
     try:
         size = os.path.getsize(audio_path)
@@ -473,7 +477,7 @@ def _gemini_upload_file(key, audio_path):
             "X-Goog-Upload-Protocol": "resumable",
             "X-Goog-Upload-Command":  "start",
             "X-Goog-Upload-Header-Content-Length": str(size),
-            "X-Goog-Upload-Header-Content-Type":   "audio/wav",
+            "X-Goog-Upload-Header-Content-Type":   mime_type,
             "Content-Type": "application/json",
         }
         meta = {"file": {"display_name": os.path.basename(audio_path)}}
@@ -502,8 +506,38 @@ def _gemini_upload_file(key, audio_path):
         if r2.status_code != 200:
             print(f"  [gemini-upload] upload failed {r2.status_code}: {r2.text[:200]}", flush=True)
             return ""
-        uri = r2.json().get("file", {}).get("uri", "")
-        print(f"  [gemini-upload] ok uri={uri}", flush=True)
+        file_obj = r2.json().get("file", {})
+        uri = file_obj.get("uri", "")
+        name = file_obj.get("name", "")
+        state = file_obj.get("state", "")
+        print(f"  [gemini-upload] ok uri={uri} state={state}", flush=True)
+
+        # Video files are PROCESSING for a few seconds after upload. Gemini returns
+        # "Please wait for the file to reach ACTIVE state" on generateContent if we
+        # use the URI too early. Poll the file resource until ACTIVE (or give up).
+        if state and state != "ACTIVE" and name:
+            import time as _t
+            for _attempt in range(30):  # up to ~60s total
+                _t.sleep(2)
+                try:
+                    sr = requests.get(
+                        f"https://generativelanguage.googleapis.com/v1beta/{name}?key={key}",
+                        timeout=15,
+                    )
+                    if sr.status_code != 200:
+                        print(f"  [gemini-upload] state poll http {sr.status_code}", flush=True)
+                        continue
+                    state = sr.json().get("state", "")
+                    if state == "ACTIVE":
+                        print(f"  [gemini-upload] file ACTIVE after {(_attempt+1)*2}s", flush=True)
+                        break
+                    if state == "FAILED":
+                        print(f"  [gemini-upload] file FAILED processing", flush=True)
+                        return ""
+                except Exception as _pe:
+                    print(f"  [gemini-upload] state poll error: {_pe}", flush=True)
+            if state != "ACTIVE":
+                print(f"  [gemini-upload] file still {state} after 60s — proceeding anyway", flush=True)
         return uri
     except Exception as e:
         print(f"  [gemini-upload] exception: {e}", flush=True)
@@ -910,45 +944,220 @@ For `emotions.breakdown`, the eight values should roughly sum to 100 (they repre
     if audio_b64:
         parts.append({"inline_data": {"mime_type": mime_type, "data": audio_b64}})
 
-    try:
-        payload = {
-            "contents": [{"parts": parts}],
-            "generationConfig": {
-                "temperature": 0.1,
-                "maxOutputTokens": 8192,
-                "topP": 0.8,
-                "responseMimeType": "application/json",
-            }
+    payload = {
+        "contents": [{"parts": parts}],
+        "generationConfig": {
+            "temperature": 0.1,
+            "maxOutputTokens": 8192,
+            "topP": 0.8,
+            "responseMimeType": "application/json",
         }
-        resp = requests.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={key}",
-            json=payload, timeout=120
-        )
-        if resp.status_code != 200:
+    }
+    # Retry on 429/503 — without this, the narrative summary silently vanishes
+    # when other concurrent Gemini calls (video analysis, transcription) hit
+    # the same free-tier quota window.
+    import time as _t
+    last_http = None
+    for _attempt in range(4):
+        try:
+            resp = requests.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={key}",
+                json=payload, timeout=120,
+            )
+            last_http = resp.status_code
+            if resp.status_code == 200:
+                raw = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+                if raw.startswith("```json"): raw = raw[7:]
+                if raw.startswith("```"):     raw = raw[3:]
+                if raw.endswith("```"):       raw = raw[:-3]
+                data = json.loads(raw.strip())
+                oa = data.get("overall_assessment", {}) or {}
+                em = data.get("emotions", {}) or {}
+                print(
+                    f"  [gemini-full] classification={oa.get('classification')} "
+                    f"risk={oa.get('risk_score')} flagged={oa.get('is_flagged')} "
+                    f"emotion={em.get('dominant', 'n/a')}",
+                    flush=True,
+                )
+                return data
+            if resp.status_code in (429, 503):
+                wait = 2 * (2 ** _attempt)
+                print(f"  [gemini-full] http {resp.status_code} — retry {_attempt+1}/4 in {wait}s", flush=True)
+                _t.sleep(wait)
+                continue
             print(f"  [gemini-full] http {resp.status_code}: {resp.text[:200]}", flush=True)
             return {}
-        raw = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-        if raw.startswith("```json"):
-            raw = raw[7:]
-        if raw.startswith("```"):
-            raw = raw[3:]
-        if raw.endswith("```"):
-            raw = raw[:-3]
-        raw = raw.strip()
-        data = json.loads(raw)
-        oa = data.get("overall_assessment", {}) or {}
-        em = data.get("emotions", {}) or {}
-        print(
-            f"  [gemini-full] classification={oa.get('classification')} "
-            f"risk={oa.get('risk_score')} flagged={oa.get('is_flagged')} "
-            f"emotion={em.get('dominant', 'n/a')}",
-            flush=True,
-        )
-        return data
-    except json.JSONDecodeError as e:
-        print(f"  [gemini-full] JSON parse error: {e}", flush=True)
-    except Exception as e:
-        print(f"  [gemini-full] error: {e}", flush=True)
+        except requests.exceptions.Timeout:
+            print(f"  [gemini-full] timeout attempt {_attempt+1}/4", flush=True)
+            continue
+        except json.JSONDecodeError as e:
+            print(f"  [gemini-full] JSON parse error: {e}", flush=True)
+            return {}
+        except Exception as e:
+            print(f"  [gemini-full] error: {e}", flush=True)
+            return {}
+    print(f"  [gemini-full] all retries exhausted (last http={last_http})", flush=True)
+    return {}
+
+# ═══════════════════════════════════════════════════════════════
+#  GEMINI VIDEO ANALYSIS — analyzes visual frames for bribery,
+#  aggressive posture, physical contact, and concealed gestures.
+#  Only runs when the uploaded file is a video (is_video=True).
+# ═══════════════════════════════════════════════════════════════
+_VIDEO_MIME_MAP = {
+    ".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime",
+    ".avi": "video/x-msvideo", ".mkv": "video/x-matroska",
+    ".3gp": "video/3gpp", ".flv": "video/x-flv", ".wmv": "video/x-ms-wmv",
+}
+
+
+def _gemini_video_analysis(video_path):
+    """Analyze video FRAMES for visual misconduct indicators.
+
+    Uses Gemini 2.5 Flash multimodal video input to detect:
+      - Cash / money exchange (bribery)
+      - Aggressive posture (pointing, chest puffing, arms raised)
+      - Physical contact (grabbing, pushing, striking)
+      - Concealed gestures (hidden transactions, palmed objects)
+
+    Returns a dict with keys: bribery_visual, aggressive_posture, physical_contact,
+    concealed_gestures, visual_summary, risk_score. Empty dict on any failure.
+    """
+    import requests
+    key = os.environ.get("GEMINI_API_KEY", "").strip()
+    if not key:
+        print("  [gemini-video] GEMINI_API_KEY not set — skipping visual analysis", flush=True)
+        return {}
+    if not os.path.exists(video_path):
+        return {}
+
+    ext = os.path.splitext(video_path)[1].lower()
+    mime_type = _VIDEO_MIME_MAP.get(ext, "video/mp4")
+    size_mb = os.path.getsize(video_path) / (1024 * 1024)
+
+    # Always use Files API for video — videos are typically large.
+    print(f"  [gemini-video] uploading {size_mb:.1f}MB video ({mime_type})...", flush=True)
+    file_uri = _gemini_upload_file(key, video_path, mime_type=mime_type)
+    if not file_uri:
+        print("  [gemini-video] upload failed — visual analysis skipped", flush=True)
+        return {}
+
+    prompt = """You are a visual misconduct analyst reviewing police body-camera footage.
+
+Watch the video carefully and detect visual evidence of officer misconduct. Focus on:
+
+1. BRIBERY_VISUAL — Cash, coins, folded currency, wallets being opened, money being passed,
+   handed, palmed, or placed on surfaces. Any exchange of objects between officer and civilian.
+2. AGGRESSIVE_POSTURE — Finger pointing at face, chest puffing, arms crossed aggressively,
+   leaning in threateningly, blocking path, towering over seated civilian.
+3. PHYSICAL_CONTACT — Grabbing, pushing, shoving, striking, pulling, restraining without
+   clear lawful basis. Note any physical contact initiated by the officer.
+4. CONCEALED_GESTURES — Hands behind back during conversation, hidden pockets, items slipped
+   into uniform or bag, quick behind-the-back handoffs, covering actions with body.
+
+Return ONLY valid JSON in this exact structure (no markdown, no code fences):
+{
+  "bribery_visual": {
+    "detected": true/false,
+    "severity": "none|low|medium|high|critical",
+    "confidence": 0-100,
+    "instances": [
+      {"description": "what was seen", "timestamp_approx": "MM:SS", "type": "cash_exchange|object_passed|money_placed"}
+    ]
+  },
+  "aggressive_posture": {
+    "detected": true/false,
+    "severity": "none|low|medium|high|critical",
+    "confidence": 0-100,
+    "instances": [
+      {"description": "posture observed", "timestamp_approx": "MM:SS", "type": "pointing|looming|crossed_arms|blocking"}
+    ]
+  },
+  "physical_contact": {
+    "detected": true/false,
+    "severity": "none|low|medium|high|critical",
+    "confidence": 0-100,
+    "instances": [
+      {"description": "contact observed", "timestamp_approx": "MM:SS", "type": "grab|push|strike|restrain"}
+    ]
+  },
+  "concealed_gestures": {
+    "detected": true/false,
+    "severity": "none|low|medium|high|critical",
+    "confidence": 0-100,
+    "instances": [
+      {"description": "gesture observed", "timestamp_approx": "MM:SS", "type": "hidden_hand|palmed_object|behind_back_handoff"}
+    ]
+  },
+  "visual_summary": "2-3 sentences in professional English describing the visual context of the interaction. Mention body language, any suspicious actions, and whether the footage visually supports or contradicts audio-based findings. If nothing notable, say so plainly.",
+  "risk_score": 0-100
+}
+
+Rules:
+- Rate severity only from VISUAL CUES. If you're uncertain, mark detected: false.
+- `confidence` = how sure you are the action happened (0=guess, 100=very clear on camera).
+- Timestamps MM:SS relative to start of video.
+- If camera is obstructed, dark, or shaky throughout, set all categories to detected: false
+  and note it in visual_summary.
+- Professional English only. Past tense for instance descriptions."""
+
+    payload = {
+        "contents": [{"parts": [
+            {"text": prompt},
+            {"file_data": {"mime_type": mime_type, "file_uri": file_uri}},
+        ]}],
+        "generationConfig": {
+            "temperature": 0.1,
+            "maxOutputTokens": 4096,
+            "topP": 0.8,
+            "responseMimeType": "application/json",
+        },
+    }
+
+    # Retry loop — Gemini frequently returns 429 (rate-limited) or 503 (overloaded)
+    # on video workloads. Up to 4 attempts with exponential backoff (2, 4, 8, 16s).
+    import time as _t
+    last_http = None
+    for _attempt in range(4):
+        try:
+            resp = requests.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={key}",
+                json=payload, timeout=300,
+            )
+            last_http = resp.status_code
+            if resp.status_code == 200:
+                raw = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+                for fence in ("```json", "```"):
+                    if raw.startswith(fence):
+                        raw = raw[len(fence):]
+                if raw.endswith("```"):
+                    raw = raw[:-3]
+                data = json.loads(raw.strip())
+                flags = [k for k in ("bribery_visual", "aggressive_posture", "physical_contact", "concealed_gestures")
+                         if (data.get(k) or {}).get("detected")]
+                print(
+                    f"  [gemini-video] detected={flags or 'none'} risk={data.get('risk_score')}",
+                    flush=True,
+                )
+                return data
+            if resp.status_code in (429, 503):
+                wait = 2 * (2 ** _attempt)
+                print(f"  [gemini-video] http {resp.status_code} — retry {_attempt+1}/4 in {wait}s", flush=True)
+                _t.sleep(wait)
+                continue
+            # 4xx client errors — don't retry
+            print(f"  [gemini-video] http {resp.status_code}: {resp.text[:200]}", flush=True)
+            return {}
+        except requests.exceptions.Timeout:
+            print(f"  [gemini-video] timeout on attempt {_attempt+1}/4", flush=True)
+            continue
+        except json.JSONDecodeError as e:
+            print(f"  [gemini-video] JSON parse error: {e}", flush=True)
+            return {}
+        except Exception as e:
+            print(f"  [gemini-video] error: {e}", flush=True)
+            return {}
+    print(f"  [gemini-video] all retries exhausted (last http={last_http})", flush=True)
     return {}
 
 
@@ -1027,31 +1236,47 @@ Rules:
 
 Return only the assessment text."""
 
-    try:
-        payload = {
-            "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {
-                "temperature": 0.3,
-                "maxOutputTokens": 2000,
-                "topP": 0.8,
-            }
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "temperature": 0.3,
+            "maxOutputTokens": 2000,
+            "topP": 0.8,
         }
-        resp = requests.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={key}",
-            json=payload, timeout=30
-        )
-        if resp.status_code == 200:
-            try:
-                text = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-                print(f"  [gemini-assessment] {text[:150]}", flush=True)
-                return text
-            except (KeyError, IndexError):
-                pass
-        else:
+    }
+    # Retry on transient 429/503 so the narrative doesn't silently disappear when
+    # the other parallel Gemini calls (transcribe, full-analysis, video) briefly
+    # saturate the free-tier quota window.
+    import time as _t
+    last_http = None
+    for _attempt in range(4):
+        try:
+            resp = requests.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={key}",
+                json=payload, timeout=60,
+            )
+            last_http = resp.status_code
+            if resp.status_code == 200:
+                try:
+                    text = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+                    print(f"  [gemini-assessment] {text[:150]}", flush=True)
+                    return text
+                except (KeyError, IndexError):
+                    return ""
+            if resp.status_code in (429, 503):
+                wait = 2 * (2 ** _attempt)
+                print(f"  [gemini-assessment] http {resp.status_code} — retry {_attempt+1}/4 in {wait}s", flush=True)
+                _t.sleep(wait)
+                continue
             print(f"  Gemini assessment error {resp.status_code}", flush=True)
-    except Exception as e:
-        print(f"  Gemini assessment error: {e}", flush=True)
-
+            return ""
+        except requests.exceptions.Timeout:
+            print(f"  [gemini-assessment] timeout attempt {_attempt+1}/4", flush=True)
+            continue
+        except Exception as e:
+            print(f"  Gemini assessment error: {e}", flush=True)
+            return ""
+    print(f"  [gemini-assessment] all retries exhausted (last http={last_http})", flush=True)
     return ""
 
 
@@ -1586,25 +1811,62 @@ def detect_eo_greeting(transcript):
     station_mentioned = any(kw in search_text for kw in GREETING_MARKERS["station"])
     role_mentioned = any(kw in search_text for kw in GREETING_MARKERS["role"])
 
-    # Extract officer name from greeting
-    extracted_name = None
-    name_patterns = [
-        r"(?:mera\s+naam|mera\s+name|mera\s+nam|my\s+name\s+is)\s+([A-Za-z\s]+?)(?:\s+hai|\s+h\b|\s+ha\b|\s+he\b|\s+hoon|\s+hun|\s+hon|,|\.|$)",
-        r"(?:mein|main|mei|i\s+am)\s+([A-Za-z\s]+?)(?:\s+hoon|\s+hun|\s+hon|\s+hu\b|,|\s+enforcement|\s+officer|\s+warden|\s+se\b|\s+say\b|$)",
-        r"(?:naam|name|nam)\s+([A-Za-z\s]+?)\s+(?:hai|h\b|ha\b|he\b)",
-        r"(?:میرا\s+نام)\s+([^\s,\.]+(?:\s+[^\s,\.]+)?)",
-    ]
+    # Extract officer name from greeting.
+    # Priority patterns:
+    #   1. "mera naam <NAME> hai"  — strongest, name between two explicit markers
+    #   2. "my name is <NAME>"     — English equivalent
+    #   3. "naam <NAME> hai"       — shorter Urdu variant
+    #   4. Urdu script "میرا نام <NAME>"
+    # NOTE: "mein/main/i am <X>" is DELIBERATELY NOT a name pattern any more —
+    # in Urdu "main <station> se aaya hoon" ("I am from <station>") has the station name
+    # right after "main", so pattern 2 of the old code was routinely capturing the station
+    # (e.g. "Model") as the officer's name. The fix is to require the stronger "naam/name"
+    # anchor; the `i_am_fallback` below is only used when no "naam" anchor exists.
     import re
+    extracted_name = None
+    _name_filler = {
+        "mera", "meri", "mere", "naam", "nam", "name", "hai", "hain", "hun", "hoon", "hon",
+        "main", "mein", "mei", "aur", "or", "ki", "ka", "se", "say", "sy",
+        "wa", "walaikum", "assalam", "alaikum", "salam", "my", "is", "i", "am",
+        "ji", "the", "a", "an", "and", "from", "of",
+        # Location-type words — never an officer's name, always a station qualifier
+        "model", "station", "stations", "area", "thana", "thane", "police",
+        "enforcement", "officer", "warden", "investigation", "town", "city",
+        # Urdu fillers / copula / location markers
+        "ہے", "ہوں", "میں", "اور", "سے", "کا", "کی", "سر", "بھی",
+        "سٹیشن", "ماڈل", "تھانے", "تھانا", "ایریا", "پولیس", "آفیسر", "افیسر",
+    }
+    name_patterns = [
+        # Primary: "mera naam <NAME> hai" — captures 1-3 ASCII tokens between markers
+        r"(?:mera\s+(?:naam|nam|name))\s+((?:[A-Za-z]+\s+){0,2}?[A-Za-z]+)\s+(?:hai|h\b|ha\b|he\b|ہے)",
+        # English: "my name is <NAME>" — ends at hai/.|,|end
+        r"(?:my\s+name\s+is)\s+((?:[A-Za-z]+\s+){0,2}?[A-Za-z]+)(?:\s+hai|[,\.]|\s+and\b|$)",
+        # Shorter: "naam <NAME> hai" — only 1 word captured (to avoid sweeping phrases)
+        r"\b(?:naam|nam|name)\s+([A-Za-z]+)\s+(?:hai|h\b|ha\b|he\b)",
+        # Urdu script: "میرا نام <NAME>" — capture only ONE token (stops at whitespace/۔/،)
+        # Previously captured 2 tokens, often sweeping in "ہے" as part of the name.
+        r"میرا\s+نام\s+([^\s،۔\.,؟?]+)",
+    ]
     for pattern in name_patterns:
-        match = re.search(pattern, search_text, re.IGNORECASE)
-        if match:
-            name_candidate = match.group(1).strip()
-            # Clean up — remove common trailing words
-            for stop in ["hai", "h", "ha", "hoon", "hun", "hon", "aur", "or", "mein", "main", "se", "say"]:
-                name_candidate = re.sub(rf'\b{stop}\b.*$', '', name_candidate, flags=re.IGNORECASE).strip()
-            if len(name_candidate) >= 2 and len(name_candidate) <= 40:
-                extracted_name = name_candidate.title()
+        for match in re.finditer(pattern, search_text, re.IGNORECASE):
+            if not match.lastindex:
+                continue
+            candidate = (match.group(1) or "").strip()
+            tokens = candidate.split()
+            # Pop fillers from edges
+            while tokens and tokens[0].lower() in _name_filler:
+                tokens.pop(0)
+            while tokens and tokens[-1].lower() in _name_filler:
+                tokens.pop()
+            # Reject if any interior token is filler (means capture spanned phrase boundary)
+            if any(t.lower() in _name_filler for t in tokens):
+                continue
+            cleaned = " ".join(tokens)
+            if 2 <= len(cleaned) <= 40 and tokens:
+                extracted_name = cleaned.title() if cleaned.isascii() else cleaned
                 break
+        if extracted_name:
+            break
 
     # Extract station/area name.
     # Strategy: capture ONLY the 1-4 words immediately before "station"/"thane"/"enforcement".
@@ -2487,9 +2749,40 @@ def analyze_upload():
         audio, sr_, is_video = _load_media(path, f.filename)
         if is_video:
             print(f"  Video file — extracted audio track ({len(audio)/sr_:.1f}s)", flush=True)
+
+        # For videos: start visual analysis in a background thread NOW so it runs
+        # in parallel with the audio pipeline (upload + PROCESSING + generateContent
+        # all overlap with transcription/tone/keyword analysis). Total wall-clock
+        # time becomes max(audio_time, video_time) instead of their sum.
+        video_future = None
+        if is_video:
+            from concurrent.futures import ThreadPoolExecutor
+            _video_executor = ThreadPoolExecutor(max_workers=1)
+            video_future = _video_executor.submit(_gemini_video_analysis, path)
+            print(f"  [gemini-video] started in background, audio pipeline continues...", flush=True)
+
         result = run_analysis(audio, sr_, officer_id, source="upload", filename=f.filename)
+
         if isinstance(result, dict):
             result["media_type"] = "video" if is_video else "audio"
+            if is_video:
+                video_analysis = {}
+                status = "ok"
+                err_msg = ""
+                try:
+                    # Wait for the parallel video job — cap total wait at 6 minutes.
+                    video_analysis = (video_future.result(timeout=360) if video_future else {}) or {}
+                    if not video_analysis:
+                        status = "empty"
+                        err_msg = "Gemini returned no visual analysis — check backend logs for reason (key/quota/upload/JSON)."
+                except Exception as _ve:
+                    status = "error"
+                    err_msg = str(_ve)[:200]
+                    print(f"  [gemini-video] wrapper error: {_ve}", flush=True)
+                video_analysis.setdefault("_status", status)
+                if err_msg:
+                    video_analysis["_status_message"] = err_msg
+                result["video_analysis"] = video_analysis
         return jsonify(result)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
