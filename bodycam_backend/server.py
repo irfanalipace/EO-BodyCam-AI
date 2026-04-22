@@ -537,7 +537,7 @@ def _gemini_transcribe_via_file(key, file_uri):
                     {"text": ptext},
                     {"file_data": {"mime_type": "audio/wav", "file_uri": file_uri}}
                 ]}],
-                "generationConfig": {"temperature": 0.0, "maxOutputTokens": 2000, "topK": 1, "topP": 0.1},
+                "generationConfig": {"temperature": 0.0, "maxOutputTokens": 8192, "topK": 1, "topP": 0.1},
             }
             r = requests.post(
                 f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={key}",
@@ -625,7 +625,7 @@ def _gemini_transcribe(audio_path):
             ]}],
             "generationConfig": {
                 "temperature": 0.0,
-                "maxOutputTokens": 2000,
+                "maxOutputTokens": 8192,
                 "topK": 1,
                 "topP": 0.1,
             }
@@ -691,7 +691,7 @@ def _gemini_transcribe(audio_path):
                 ]}],
                 "generationConfig": {
                     "temperature": 0.0,
-                    "maxOutputTokens": 2000,
+                    "maxOutputTokens": 8192,
                     "topK": 1,
                     "topP": 0.1,
                 }
@@ -828,6 +828,20 @@ Respond ONLY with valid JSON in this exact format (no markdown, no code fences):
             }
         ]
     },
+    "emotions": {
+        "dominant": "one of: anger|frustration|contempt|intimidation|fear|calm|neutral|agitation",
+        "breakdown": {
+            "anger": 0-100,
+            "frustration": 0-100,
+            "contempt": 0-100,
+            "intimidation": 0-100,
+            "fear": 0-100,
+            "calm": 0-100,
+            "neutral": 0-100,
+            "agitation": 0-100
+        },
+        "description": "1-2 sentences explaining the officer's emotional state in this recording"
+    },
     "overall_assessment": {
         "classification": "normal/concerning/unprofessional/critical",
         "risk_score": 0-100,
@@ -835,7 +849,9 @@ Respond ONLY with valid JSON in this exact format (no markdown, no code fences):
         "summary": "2-3 sentence summary of officer behavior",
         "recommended_action": "what action should be taken"
     }
-}"""
+}
+
+For `emotions.breakdown`, the eight values should roughly sum to 100 (they represent the relative proportion of each emotion heard). Rate purely from VOICE CUES (tone, pitch, volume, cadence) — not from the spoken words alone. If audio is unclear, set all to 0 and dominant = "neutral"."""
 
     if language_hint:
         analysis_prompt += (
@@ -899,7 +915,7 @@ Respond ONLY with valid JSON in this exact format (no markdown, no code fences):
             "contents": [{"parts": parts}],
             "generationConfig": {
                 "temperature": 0.1,
-                "maxOutputTokens": 4096,
+                "maxOutputTokens": 8192,
                 "topP": 0.8,
                 "responseMimeType": "application/json",
             }
@@ -921,9 +937,11 @@ Respond ONLY with valid JSON in this exact format (no markdown, no code fences):
         raw = raw.strip()
         data = json.loads(raw)
         oa = data.get("overall_assessment", {}) or {}
+        em = data.get("emotions", {}) or {}
         print(
             f"  [gemini-full] classification={oa.get('classification')} "
-            f"risk={oa.get('risk_score')} flagged={oa.get('is_flagged')}",
+            f"risk={oa.get('risk_score')} flagged={oa.get('is_flagged')} "
+            f"emotion={em.get('dominant', 'n/a')}",
             flush=True,
         )
         return data
@@ -1014,7 +1032,7 @@ Return only the assessment text."""
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {
                 "temperature": 0.3,
-                "maxOutputTokens": 400,
+                "maxOutputTokens": 2000,
                 "topP": 0.8,
             }
         }

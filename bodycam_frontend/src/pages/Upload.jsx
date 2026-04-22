@@ -595,7 +595,34 @@ function CategoryTile({ icon, title, data }) {
 }
 
 
-function GeminiAssessment({ assessment, analysis, greeting }) {
+// Merge Gemini's category analysis with keyword/tone violations so the tiles
+// never say NOT DETECTED while a matching violation exists in the list below.
+function mergeTile(geminiCategory, violations, typeKeywords) {
+  const matches = (violations || []).filter(v => {
+    const t = String(v.type || '').toUpperCase()
+    const lbl = String(v.label || '').toUpperCase()
+    return typeKeywords.some(k => t.includes(k) || lbl.includes(k))
+  })
+  if (matches.length === 0) return geminiCategory
+  if (geminiCategory?.detected && (geminiCategory.instances?.length || 0) > 0) return geminiCategory
+  const sevRank = { critical:5, high:4, medium:3, low:2, none:1 }
+  const topSev = matches.reduce((a, v) => {
+    const s = String(v.severity || 'low').toLowerCase()
+    return sevRank[s] > sevRank[a] ? s : a
+  }, 'low')
+  return {
+    detected: true,
+    severity: topSev,
+    instances: matches.slice(0, 4).map(v => ({
+      text: v.label || v.type,
+      translation: v.description || v.detail || '',
+      type: v.source || 'keyword/tone',
+      timestamp_approx: (v.keywords_found || []).join(', '),
+    })),
+  }
+}
+
+function GeminiAssessment({ assessment, analysis, greeting, violations }) {
   const g = analysis || {}
   const oa = g.overall_assessment || {}
   const summary = oa.summary || assessment || ''
@@ -725,13 +752,89 @@ function GeminiAssessment({ assessment, analysis, greeting }) {
         )}
       </div>
 
-      {/* 4 misconduct category tiles — Vulgar / False / Aggressive / Bribery */}
-      {analysis && (
-        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px', marginTop:'14px' }}>
-          <CategoryTile icon="🤬" title="Vulgar Language"    data={g.vulgar_language}/>
-          <CategoryTile icon="🚫" title="False Statements"   data={g.false_statements}/>
-          <CategoryTile icon="📢" title="Aggressive Voice"   data={g.loud_aggressive_voice}/>
-          <CategoryTile icon="💰" title="Bribery Indicators" data={g.bribery_indicators}/>
+      {/* 4 misconduct category tiles — Vulgar / False / Aggressive / Bribery.
+          Tiles cross-reference Gemini's semantic analysis with the keyword/tone violation
+          list — a tile says DETECTED if either source flagged it. */}
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px', marginTop:'14px' }}>
+        <CategoryTile icon="🤬" title="Vulgar Language"
+          data={mergeTile(g.vulgar_language, violations, ['GALI','ABUSE','ABUSIVE','VULGAR'])}/>
+        <CategoryTile icon="🚫" title="False Statements"
+          data={mergeTile(g.false_statements, violations, ['JHOOTA','FALSE','GALAT_CHALLAN','UNPROFESSIONAL'])}/>
+        <CategoryTile icon="📢" title="Aggressive Voice"
+          data={mergeTile(g.loud_aggressive_voice, violations,
+            ['SHOUTING','LOUD','BURST','AGITATION','AGITATED','PITCH','VOICE_RAISED','VOICE_EXPLOSION','HARSH','ELEVATED','ANGRY','DHAMKI','INTIMIDATION','RUDE','POWER_ABUSE'])}/>
+        <CategoryTile icon="💰" title="Bribery Indicators"
+          data={mergeTile(g.bribery_indicators, violations, ['RISHWAT','BRIBE','BRIBERY'])}/>
+      </div>
+
+      {/* Fallback narrative — shown when Gemini's summary is empty/truncated so the card
+          is never blank for demos. */}
+      {!summary && (assessment || oa.recommended_action) && (
+        <div style={{ marginTop:'10px', fontSize:'11px', color:'#64748B',
+          fontStyle:'italic', background:'rgba(245,158,11,0.06)',
+          border:'1px solid rgba(245,158,11,0.2)', borderRadius:'8px', padding:'8px 12px' }}>
+          AI narrative summary is unavailable for this recording. See violation list below for details.
+        </div>
+      )}
+
+      <EmotionPanel emotions={g.emotions}/>
+    </div>
+  )
+}
+
+function EmotionPanel({ emotions }) {
+  if (!emotions || !emotions.breakdown) return null
+  const br = emotions.breakdown || {}
+  const rows = [
+    { key:'anger',        label:'Anger',        color:'#EF4444' },
+    { key:'frustration',  label:'Frustration',  color:'#F97316' },
+    { key:'contempt',     label:'Contempt',     color:'#A855F7' },
+    { key:'intimidation', label:'Intimidation', color:'#DC2626' },
+    { key:'fear',         label:'Fear',         color:'#6366F1' },
+    { key:'agitation',    label:'Agitation',    color:'#F59E0B' },
+    { key:'calm',         label:'Calm',         color:'#10B981' },
+    { key:'neutral',      label:'Neutral',      color:'#64748B' },
+  ].map(r => ({ ...r, value: Math.max(0, Math.min(100, Number(br[r.key]) || 0)) }))
+  const total = rows.reduce((a, r) => a + r.value, 0) || 1
+  const dominant = (emotions.dominant || rows.slice().sort((a, b) => b.value - a.value)[0].label).toString()
+  const shown = rows.filter(r => r.value > 0).sort((a, b) => b.value - a.value)
+  if (shown.length === 0) return null
+
+  return (
+    <div style={{ marginTop:'14px', background:'#F8FAF7', borderRadius:'12px',
+      padding:'16px 18px', border:'1px solid rgba(139,92,246,0.18)' }}>
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'10px' }}>
+        <span style={{ fontSize:'12px', fontWeight:800, color:'#475569',
+          letterSpacing:'0.06em', textTransform:'uppercase' }}>
+          🎭 Emotion Analysis (from voice)
+        </span>
+        <span style={{ fontSize:'11px', fontWeight:800, color:'#8B5CF6',
+          background:'rgba(139,92,246,0.12)', padding:'3px 10px', borderRadius:'6px',
+          letterSpacing:'0.05em', textTransform:'uppercase' }}>
+          {dominant}
+        </span>
+      </div>
+
+      <div style={{ display:'grid', gridTemplateColumns:'1fr', gap:'6px' }}>
+        {shown.map(r => {
+          const pct = Math.round((r.value / total) * 100)
+          return (
+            <div key={r.key} style={{ display:'flex', alignItems:'center', gap:'8px', fontSize:'11px' }}>
+              <span style={{ width:'90px', color:'#475569', fontWeight:700 }}>{r.label}</span>
+              <div style={{ flex:1, height:'8px', background:'#E5E7EB', borderRadius:'4px', overflow:'hidden' }}>
+                <div style={{ width:`${pct}%`, height:'100%', background:r.color,
+                  borderRadius:'4px', transition:'width 0.4s ease' }}/>
+              </div>
+              <span style={{ width:'40px', textAlign:'right', color:r.color, fontWeight:800 }}>{pct}%</span>
+            </div>
+          )
+        })}
+      </div>
+
+      {emotions.description && (
+        <div style={{ marginTop:'10px', fontSize:'11px', color:'#64748B',
+          fontStyle:'italic', lineHeight:1.5 }}>
+          {emotions.description}
         </div>
       )}
     </div>
