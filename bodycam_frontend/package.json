@@ -8,7 +8,9 @@
     "react-router-dom": "^6.24.1",
     "socket.io-client": "^4.7.5",
     "recharts": "^2.12.7",
-    "axios": "^1.7.2"
+    "axios": "^1.7.2",
+    "@ffmpeg/ffmpeg": "^0.12.10",
+    "@ffmpeg/util": "^0.12.1"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",

@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react'
 import { ScoreRing, ViolationCard, ViolationSummary, ToneBar, Spinner, SeverityBadge, ScoreBar, SeverityScale, SEV } from '../components/UI'
 import ApiService from '../services/api'
+import { isVideoFile, prepareUploadFile } from '../utils/extractAudio'
 
 const CARD  = { background:'#111827', border:'1px solid #1F2937', borderRadius:'16px', padding:'22px', marginBottom:'14px' }
 const LABEL = { fontSize:'10px', color:'#64748B', textTransform:'uppercase', letterSpacing:'0.08em', fontWeight:700, marginBottom:'10px', display:'block' }
@@ -60,10 +61,36 @@ export default function Upload() {
   const analyze = async () => {
     if (!file) return
     setLoading(true); setError(null); setResult(null)
+
+    // Step 1 — if it's a video, extract audio in the BROWSER first using
+    // ffmpeg.wasm. Long videos (30 min – 1 hr) shrink from ~500 MB to ~10 MB
+    // before any byte hits the network. The user's PC does the work; the
+    // server only sees compressed audio. Backend logic is unchanged.
+    let uploadFile = file
+    if (isVideoFile(file)) {
+      try {
+        setProgress('Loading audio extractor (first time may take 30 s)...')
+        uploadFile = await prepareUploadFile(file, ({ stage, percent, message }) => {
+          if (stage === 'extracting' && typeof percent === 'number') {
+            setProgress(`Extracting audio from video... ${percent}%`)
+          } else if (stage === 'reading') {
+            setProgress('Reading video file...')
+          } else if (stage === 'done') {
+            setProgress(message)
+          }
+        })
+      } catch (extErr) {
+        // If browser extraction fails, fall back to uploading the original file
+        // so the backend can extract it instead. Nothing breaks.
+        console.warn('Browser audio extraction failed, falling back to server-side extraction:', extErr)
+        uploadFile = file
+      }
+    }
+
     let si = 0
     const timer = setInterval(() => setProgress(PROGRESS_STEPS[si++ % PROGRESS_STEPS.length]), 2000)
     try {
-      const r = await ApiService.analyzeUpload(file, officer)
+      const r = await ApiService.analyzeUpload(uploadFile, officer)
       setResult(r.data)
     } catch(e) {
       setError(e.response?.data?.error || 'Server error. Start backend: python server.py')
