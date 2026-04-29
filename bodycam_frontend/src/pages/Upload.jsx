@@ -302,7 +302,7 @@ export default function Upload() {
   )
 }
 
-function ResultPanel({ result: r }) {
+export function ResultPanel({ result: r }) {
   const ac  = r.acoustics || {}
   const ep  = ac.enrolled_pitch_hz || 143
   const sev = r.severity
@@ -1042,7 +1042,7 @@ function GreetingPanel({ greeting }) {
 }
 
 
-function MediaPlayer({ file, url, diarization }) {
+export function MediaPlayer({ file, url, diarization }) {
   const mediaRef = useRef(null)
   const [playing, setPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)

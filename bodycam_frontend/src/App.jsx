@@ -1,21 +1,23 @@
 import React, { useState, useEffect } from 'react'
 import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom'
 import { useSocket } from './hooks/useSocket'
-import Dashboard  from './pages/Dashboard'
-import Upload     from './pages/Upload'
-import LiveStream from './pages/LiveStream'
-import Incidents  from './pages/Incidents'
-import Samples    from './pages/Samples'
-import Officers   from './pages/Officers'
-import ApiService from './services/api'
+import Dashboard     from './pages/Dashboard'
+import Upload        from './pages/Upload'
+import GeminiAnalyse from './pages/GeminiAnalyse'
+import LiveStream    from './pages/LiveStream'
+import Incidents     from './pages/Incidents'
+import Samples       from './pages/Samples'
+import Officers      from './pages/Officers'
+import ApiService    from './services/api'
 
 const NAV = [
-  { to:'/',          label:'Dashboard',   icon:'◧' },
-  { to:'/upload',    label:'Upload Audio', icon:'↑' },
-  { to:'/live',      label:'Live Stream',  icon:'●', live:true },
-  { to:'/samples',   label:'Test Samples', icon:'▦' },
-  { to:'/incidents', label:'Incidents',    icon:'⚑' },
-  { to:'/officers',  label:'Officers',     icon:'◎' },
+  { to:'/',          label:'Dashboard',       icon:'◧' },
+  { to:'/upload',    label:'Upload Audio',    icon:'↑' },
+  { to:'/gemini',    label:'Gemini Analysis', icon:'✦' },
+  { to:'/live',      label:'Live Stream',     icon:'●', live:true },
+  { to:'/samples',   label:'Test Samples',    icon:'▦' },
+  { to:'/incidents', label:'Incidents',       icon:'⚑' },
+  { to:'/officers',  label:'Officers',        icon:'◎' },
 ]
 
 export default function App() {
@@ -134,6 +136,7 @@ export default function App() {
           <Routes>
             <Route path="/"          element={<Dashboard />} />
             <Route path="/upload"    element={<Upload />} />
+            <Route path="/gemini"    element={<GeminiAnalyse />} />
             <Route path="/live"      element={<LiveStream liveStatus={liveStatus} />} />
             <Route path="/samples"   element={<Samples />} />
             <Route path="/incidents" element={<Incidents alerts={alerts} markRead={markRead} clearAlerts={clearAlerts} />} />

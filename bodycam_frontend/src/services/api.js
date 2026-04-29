@@ -1,10 +1,21 @@
 import axios from 'axios'
 
+// ── Python (Flask + SocketIO) backend at :5050 — Whisper + SVM pipeline ──
 const BASE = import.meta.env.VITE_API_URL || 'http://localhost:5050'
 
 const api = axios.create({
   baseURL: BASE,
   timeout: 120000,  // 2 minutes — enrollment audio can be large
+})
+
+// ── .NET (Gemini-powered) backend at :8080 — multimodal video + audio ──
+// Uses gemini-2.5-flash-lite by default, returns the same snake_case JSON
+// shape the Upload page renders (see PERA360.Shared.Contracts.AnalyseVideoResponse).
+const DOTNET_BASE = import.meta.env.VITE_DOTNET_API_URL || 'http://localhost:8080'
+
+const dotnetApi = axios.create({
+  baseURL: DOTNET_BASE,
+  timeout: 600000,  // 10 minutes — Gemini can take a while on full videos
 })
 
 export const ApiService = {
@@ -48,6 +59,20 @@ export const ApiService = {
       headers: { 'Content-Type': 'multipart/form-data' },
     })
   },
+
+  // ── .NET / Gemini multimodal endpoint ─────────────────────────────
+  // POST /api/analyse  (multipart)  field "video" = file, "officerId"
+  // Response is the snake_case AnalyseVideoResponse shape that the
+  // existing Upload-style ResultPanel knows how to render.
+  analyseGemini: (file, oid, stationId = '') => {
+    const form = new FormData()
+    form.append('video',     file)        // .NET expects "video" (any media file)
+    form.append('officerId', oid)         // camelCase per [FromForm(Name="officerId")]
+    if (stationId) form.append('stationId', stationId)
+    return dotnetApi.post('/api/analyse', form)
+  },
+
+  geminiHealth: () => dotnetApi.get('/api/analyse/health'),
 }
 
 export default ApiService
