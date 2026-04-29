@@ -574,7 +574,7 @@ def _gemini_transcribe_via_file(key, file_uri):
                 "generationConfig": {"temperature": 0.0, "maxOutputTokens": 8192, "topK": 1, "topP": 0.1},
             }
             r = requests.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={key}",
+                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={key}",
                 json=payload, timeout=120,
             )
             if r.status_code != 200:
