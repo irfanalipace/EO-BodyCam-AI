@@ -11,7 +11,8 @@ Severity: NORMAL / WARNING / CRITICAL
 import os, json, pickle, time, uuid, tempfile
 try:
     from dotenv import load_dotenv
-    load_dotenv()
+    # Load .env sitting next to this file, regardless of the shell's CWD.
+    load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 except ImportError:
     pass
 try:
@@ -37,6 +38,23 @@ app = Flask(__name__)
 app.config["SECRET_KEY"] = "eo-bodycam-v50"
 CORS(app, origins="*")
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
+
+
+def _gemini_key():
+    """Return the Gemini API key.
+
+    Priority: per-request header X-Gemini-Api-Key (forwarded by the .NET
+    backend from appsettings.json) > GEMINI_API_KEY env var (.env / shell).
+    """
+    try:
+        from flask import has_request_context, request as _req
+        if has_request_context():
+            hdr = (_req.headers.get("X-Gemini-Api-Key") or "").strip()
+            if hdr:
+                return hdr
+    except Exception:
+        pass
+    return os.environ.get("GEMINI_API_KEY", "").strip()
 
 # ═══════════════════════════════════════════════════════════════
 #  LOAD AI MODELS
@@ -604,12 +622,12 @@ def _gemini_transcribe(audio_path):
     Returns tuple: (urdu_text, english_translation)
     """
     import requests, base64
-    key = os.environ.get("GEMINI_API_KEY", "").strip()
+    key = _gemini_key()
     if not key:
         print("  [gemini-transcribe] GEMINI_API_KEY not set — skipping Gemini, will fallback", flush=True)
         return "", ""
     if len(key) < 10:
-        print(f"  [gemini-transcribe] key too short ('{key[:6]}...') — check GEMINI_API_KEY", flush=True)
+        print(f"  [gemini-transcribe] key too short ('{key[:6]}...') — check Gemini key", flush=True)
         return "", ""
 
     try:
@@ -771,7 +789,7 @@ def _gemini_full_analysis(audio_path, transcript, tone_label, violations, acoust
     loud_aggressive_voice, bribery_indicators, and overall_assessment.
     """
     import requests, base64
-    key = os.environ.get("GEMINI_API_KEY", "")
+    key = _gemini_key()
     if not key:
         return {}
 
@@ -1024,7 +1042,7 @@ def _gemini_video_analysis(video_path):
     concealed_gestures, visual_summary, risk_score. Empty dict on any failure.
     """
     import requests
-    key = os.environ.get("GEMINI_API_KEY", "").strip()
+    key = _gemini_key()
     if not key:
         print("  [gemini-video] GEMINI_API_KEY not set — skipping visual analysis", flush=True)
         return {}
@@ -1166,7 +1184,7 @@ def _gemini_assess_behavior(transcript, tone_label, violations, acoustics, greet
     Returns human-readable paragraph describing the officer's behavior.
     """
     import requests
-    key = os.environ.get("GEMINI_API_KEY", "")
+    key = _gemini_key()
     if not key or not transcript:
         return ""
 
@@ -1482,7 +1500,7 @@ def auto_transcribe(audio, sample_rate=SR):
     transcript = urdu_transcript + (" | " + english_extra if english_extra else "")
     print(f"  Final [{method}]: {urdu_transcript[:200]}", flush=True)
 
-    return transcript, method
+    return transcript, method, urdu_transcript, english_extra
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -2408,7 +2426,7 @@ def run_analysis(audio, sr, officer_id="EO_001", source="upload", filename=""):
     analyze_audio = eo_audio if eo_detected and len(eo_audio) > sr * 0.3 else audio
 
     print(f"  Transcribing ({len(analyze_audio)/sr:.1f}s)...", flush=True)
-    transcript, transcription_method = auto_transcribe(analyze_audio, sr)
+    transcript, transcription_method, transcript_urdu_only, transcript_english_only = auto_transcribe(analyze_audio, sr)
 
     tone_label, tone_proba, acoustics, tone_score, tone_viols, tone_percents = analyze_tone(analyze_audio, sr)
     kw_score, kw_viols = detect_keywords(transcript)
@@ -2543,6 +2561,8 @@ def run_analysis(audio, sr, officer_id="EO_001", source="upload", filename=""):
         "max_similarity":       round(max_sim, 3),
         "eo_threshold":         EO_THRESHOLD,
         "transcript":           transcript,
+        "transcript_urdu":      transcript_urdu_only,
+        "transcript_english":   transcript_english_only,
         "transcription_method": transcription_method,
         "transcript_source":    "auto_voice_detection",
         "greeting":             greeting_info,
@@ -2990,14 +3010,14 @@ if __name__ == "__main__":
     print(f"{'='*60}")
     _gk = os.environ.get("GEMINI_API_KEY", "").strip()
     if not _gk:
-        gem_status = "NOT SET (set GEMINI_API_KEY for best accuracy)"
+        gem_status = "ENV unset — will use X-Gemini-Api-Key from .NET (appsettings.json)"
     elif len(_gk) < 10:
         gem_status = (
-            f"KEY TOO SHORT ('{_gk[:6]}...') — check GEMINI_API_KEY. "
+            f"ENV KEY TOO SHORT ('{_gk[:6]}...') — fix GEMINI_API_KEY or rely on .NET header. "
             "Create one at https://aistudio.google.com/app/apikey"
         )
     else:
-        gem_status = "ACTIVE"
+        gem_status = "ENV active (header from .NET will override per-request if present)"
     print(f" Gemini API:    {gem_status}")
     print(f" Transcription: Gemini 2.5 Flash → Google Speech (fallback) → local whisper-small")
     print(f" Emotions:      {' / '.join(emotions)}")
