@@ -1,7 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react'
+import { io } from 'socket.io-client'
 import { ScoreRing, SeverityBadge, Spinner, SEV } from '../components/UI'
 import { ResultPanel } from './Upload'
 import ApiService from '../services/api'
+
+const SOCKET_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5050'
 
 /**
  * Video Analysis tab.
@@ -56,25 +59,98 @@ export default function VideoAnalysis() {
   const [busy,      setBusy]      = useState(false)
   const [openId,    setOpenId]    = useState(null)
   const [openData,  setOpenData]  = useState(null)
-  const pollRef = useRef(null)
+
+  // Live updates use the SocketIO push events the backend already emits
+  // (watch_queued / watch_started / watch_finished / watch_failed). Polling
+  // is only a slow heartbeat that fills in if the socket is disconnected,
+  // and stops entirely when the tab is hidden — so the network tab stays clean.
+  const inFlightRef = useRef(false)
+  const abortRef    = useRef(null)
+  const timerRef    = useRef(null)
+  const aliveRef    = useRef(true)
+  const sockRef     = useRef(null)
+  const sockOkRef   = useRef(false)
+
+  const HEARTBEAT_FAST_MS = 4000   // when socket is down
+  const HEARTBEAT_SLOW_MS = 30000  // when socket is fine — just a sanity sync
+  const REQ_TIMEOUT_MS    = 8000
+
+  const upsertItem = (sum) => {
+    if (!sum || !sum.file_id) return
+    setItems(prev => {
+      const i = prev.findIndex(x => x.file_id === sum.file_id)
+      if (i === -1) return [sum, ...prev]
+      const next = prev.slice()
+      next[i] = { ...next[i], ...sum }
+      return next
+    })
+  }
 
   const fetchAll = async () => {
+    if (inFlightRef.current) return
+    if (typeof document !== 'undefined' && document.hidden) return  // pause when tab hidden
+    inFlightRef.current = true
+
+    if (abortRef.current) abortRef.current.abort()
+    abortRef.current = new AbortController()
+    const signal = abortRef.current.signal
+    const killer = setTimeout(() => abortRef.current?.abort(), REQ_TIMEOUT_MS)
+
     try {
       const [s, l] = await Promise.all([
-        ApiService.watchStatus(),
-        ApiService.watchList(),
+        ApiService.watchStatus({ signal }),
+        ApiService.watchList({}, { signal }),
       ])
+      if (!aliveRef.current) return
       setStatus(s.data)
       setItems(l.data.items || [])
-    } catch (_e) {
-      setStatus(prev => prev ? { ...prev, _offline: true } : { _offline: true })
+    } catch (e) {
+      if (!aliveRef.current) return
+      if (e.name !== 'CanceledError' && e.code !== 'ERR_CANCELED') {
+        setStatus(prev => prev ? { ...prev, _offline: true } : { _offline: true })
+      }
+    } finally {
+      clearTimeout(killer)
+      inFlightRef.current = false
+      if (aliveRef.current) {
+        const delay = sockOkRef.current ? HEARTBEAT_SLOW_MS : HEARTBEAT_FAST_MS
+        timerRef.current = setTimeout(fetchAll, delay)
+      }
     }
   }
 
   useEffect(() => {
+    aliveRef.current = true
+
+    // ── SocketIO push subscription ─────────────────────────────────
+    const sock = io(SOCKET_BASE, { transports: ['websocket', 'polling'] })
+    sockRef.current = sock
+    sock.on('connect',    () => { sockOkRef.current = true })
+    sock.on('disconnect', () => { sockOkRef.current = false })
+    sock.on('watch_queued',   upsertItem)
+    sock.on('watch_started',  upsertItem)
+    sock.on('watch_finished', upsertItem)
+    sock.on('watch_failed',   upsertItem)
+
+    // ── Initial load + heartbeat ───────────────────────────────────
     fetchAll()
-    pollRef.current = setInterval(fetchAll, 3000)
-    return () => { if (pollRef.current) clearInterval(pollRef.current) }
+
+    // ── Pause / resume on tab visibility ───────────────────────────
+    const onVisibility = () => {
+      if (!document.hidden && aliveRef.current && !inFlightRef.current) {
+        if (timerRef.current) clearTimeout(timerRef.current)
+        fetchAll()
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+
+    return () => {
+      aliveRef.current = false
+      document.removeEventListener('visibilitychange', onVisibility)
+      if (timerRef.current) clearTimeout(timerRef.current)
+      if (abortRef.current) abortRef.current.abort()
+      try { sock.disconnect() } catch {}
+    }
   }, [])
 
   const rescan = async () => {

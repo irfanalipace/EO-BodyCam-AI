@@ -78,12 +78,13 @@ export const ApiService = {
   geminiHealth: () => dotnetApi.get('/api/analyse/health'),
 
   // ── Watch-folder auto-analysis (drop video → backend analyzes) ────
-  watchStatus:  ()                    => api.get('/api/watch/status'),
-  watchList:    (params = {})         => api.get('/api/watch/list', { params }),
-  watchResult:  (fileId)              => api.get(`/api/watch/result/${fileId}`),
-  watchRescan:  ()                    => api.post('/api/watch/rescan'),
-  watchDelete:  (fileId)              => api.delete(`/api/watch/result/${fileId}`),
-  watchConfig:  (cfg)                 => api.post('/api/watch/config', cfg),
+  // Lightweight polls — short timeout so a stuck backend can never pile up.
+  watchStatus:  (opts = {})              => api.get('/api/watch/status',          { timeout: 10000, ...opts }),
+  watchList:    (params = {}, opts = {}) => api.get('/api/watch/list',            { params, timeout: 10000, ...opts }),
+  watchResult:  (fileId, opts = {})      => api.get(`/api/watch/result/${fileId}`,{ timeout: 15000, ...opts }),
+  watchRescan:  ()                       => api.post('/api/watch/rescan',  null,  { timeout: 10000 }),
+  watchDelete:  (fileId)                 => api.delete(`/api/watch/result/${fileId}`, { timeout: 10000 }),
+  watchConfig:  (cfg)                    => api.post('/api/watch/config',  cfg,   { timeout: 10000 }),
 }
 
 export default ApiService
