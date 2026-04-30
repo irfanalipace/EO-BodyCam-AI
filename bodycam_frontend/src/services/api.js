@@ -73,6 +73,17 @@ export const ApiService = {
   },
 
   geminiHealth: () => dotnetApi.get('/api/analyse/health'),
+
+  // ── .NET / Background folder watcher endpoints ────────────────────
+  // List the folder-watcher queue. Optional filters: status, severity.
+  // Response shape (camelCase from .NET):
+  //   { total, page, pageSize, items: [{ id, fileName, status, severity, totalScore, ... }] }
+  getVideoProcessing: (params = {}) =>
+    dotnetApi.get('/api/video-processing', { params }),
+
+  // Detail for one row — joins ProcessedFile + Recording + AnalysisResult + Violations.
+  getVideoProcessingDetail: (id) =>
+    dotnetApi.get(`/api/video-processing/${id}`),
 }
 
 export default ApiService
