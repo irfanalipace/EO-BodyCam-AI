@@ -1,7 +1,7 @@
-import React, { useState, useRef } from 'react'
+import React, { useState, useRef, useEffect } from 'react'
 import { ScoreRing, ViolationCard, ViolationSummary, ToneBar, Spinner, SeverityBadge, ScoreBar, SeverityScale, SEV } from '../components/UI'
 import ApiService from '../services/api'
-import { isVideoFile, prepareUploadFile } from '../utils/extractAudio'
+import { isVideoFile, isSmallFile, prepareUploadFile, preloadFfmpeg } from '../utils/extractAudio'
 
 const CARD  = { background:'#111827', border:'1px solid #1F2937', borderRadius:'16px', padding:'22px', marginBottom:'14px' }
 const LABEL = { fontSize:'10px', color:'#64748B', textTransform:'uppercase', letterSpacing:'0.08em', fontWeight:700, marginBottom:'10px', display:'block' }
@@ -12,13 +12,16 @@ const OFFICERS = [
   { id:'EO_003', name:'Fatima Malik — PK-KHI-001' },
 ]
 
+// Pipeline stages reflected on the server side, in execution order. Once the
+// upload finishes we cycle through these so the user sees what's happening.
 const PROGRESS_STEPS = [
-  'Removing background noise...',
-  'Identifying EO voice...',
-  'Detecting officer greeting...',
-  'Transcribing Urdu speech...',
-  'Scanning for violation keywords...',
-  'Calculating violation score...',
+  'Identifying EO voice (voiceprint match)...',
+  'Detecting officer greeting (Salam · Name · Station · Role)...',
+  'Transcribing Urdu / Punjabi / English...',
+  'Analyzing tone (loudness · pitch · agitation)...',
+  'Scanning 588 violation keywords across 10 categories...',
+  'Categorising violations (Normal · Warning · Critical)...',
+  'Calculating final score and officer assessment...',
 ]
 
 const GREETING_EXAMPLE = "Assalam Alaikum, mera naam [Name] hai, mein [Station] enforcement station se aaya hoon"
@@ -44,8 +47,26 @@ export default function Upload() {
   const [error,    setError]    = useState(null)
   const [drag,     setDrag]     = useState(false)
   const [progress, setProgress] = useState('')
+  const [stage,    setStage]    = useState('')   // 'extract' | 'upload' | 'analyze'
+  const [stagePct, setStagePct] = useState(0)    // 0..100 for current stage
+  const [stageInfo, setStageInfo] = useState('') // e.g. "4.2 MB · 1.3 MB/s"
   const [mediaUrl, setMediaUrl] = useState(null)
-  const inputRef = useRef()
+  const inputRef  = useRef()
+  const abortRef  = useRef(null)
+  const timerRef  = useRef(null)
+
+  // Warm up ffmpeg.wasm in the background as soon as the page mounts so the
+  // first real extraction does not eat 5–30 seconds of WASM download/init.
+  useEffect(() => {
+    preloadFfmpeg()
+  }, [])
+
+  // Cleanup any in-flight timers / object URLs when leaving the page.
+  useEffect(() => () => {
+    if (timerRef.current) clearInterval(timerRef.current)
+    if (abortRef.current) abortRef.current.abort()
+    if (mediaUrl) URL.revokeObjectURL(mediaUrl)
+  }, [mediaUrl])
 
   const handleFile = f => {
     if (!f) return
@@ -58,44 +79,99 @@ export default function Upload() {
     handleFile(e.dataTransfer.files[0])
   }
 
+  const cancel = () => {
+    if (abortRef.current) abortRef.current.abort()
+    if (timerRef.current) clearInterval(timerRef.current)
+    setLoading(false); setProgress(''); setStage(''); setStagePct(0); setStageInfo('')
+    setError('Cancelled by user.')
+  }
+
   const analyze = async () => {
     if (!file) return
     setLoading(true); setError(null); setResult(null)
+    setStage(''); setStagePct(0); setStageInfo('')
 
-    // Step 1 — if it's a video, extract audio in the BROWSER first using
-    // ffmpeg.wasm. Long videos (30 min – 1 hr) shrink from ~500 MB to ~10 MB
-    // before any byte hits the network. The user's PC does the work; the
-    // server only sees compressed audio. Backend logic is unchanged.
+    abortRef.current = new AbortController()
+
+    // ── Stage 1 — local audio extraction (skipped for audio + small video) ──
     let uploadFile = file
-    if (isVideoFile(file)) {
+    if (isVideoFile(file) && !isSmallFile(file)) {
+      setStage('extract')
+      setProgress('Preparing audio extractor...')
       try {
-        setProgress('Loading audio extractor (first time may take 30 s)...')
-        uploadFile = await prepareUploadFile(file, ({ stage, percent, message }) => {
-          if (stage === 'extracting' && typeof percent === 'number') {
-            setProgress(`Extracting audio from video... ${percent}%`)
-          } else if (stage === 'reading') {
+        uploadFile = await prepareUploadFile(file, ({ stage: s, percent, message }) => {
+          if (s === 'extracting' && typeof percent === 'number') {
+            setStagePct(percent)
+            setProgress(`Extracting audio from video (${percent}%)`)
+          } else if (s === 'reading') {
+            setStagePct(0)
             setProgress('Reading video file...')
-          } else if (stage === 'done') {
+          } else if (s === 'done') {
+            setStagePct(100)
+            setProgress(message)
+          } else if (s === 'skip') {
             setProgress(message)
           }
         })
       } catch (extErr) {
-        // If browser extraction fails, fall back to uploading the original file
-        // so the backend can extract it instead. Nothing breaks.
-        console.warn('Browser audio extraction failed, falling back to server-side extraction:', extErr)
+        // Browser extraction failed — let the backend handle it instead.
+        console.warn('Browser audio extraction failed, falling back to server-side:', extErr)
         uploadFile = file
       }
+    } else if (isVideoFile(file) && isSmallFile(file)) {
+      setProgress(`Small video (${(file.size/1024/1024).toFixed(1)} MB) — uploading directly`)
     }
 
-    let si = 0
-    const timer = setInterval(() => setProgress(PROGRESS_STEPS[si++ % PROGRESS_STEPS.length]), 2000)
+    // ── Stage 2 — upload with real %, MB/s, and ETA ──
+    setStage('upload'); setStagePct(0); setStageInfo('')
+    const uploadStart = performance.now()
+    const onUploadProgress = (e) => {
+      if (!e || !e.total) return
+      const pct = Math.round((e.loaded / e.total) * 100)
+      const elapsedSec = Math.max(0.1, (performance.now() - uploadStart) / 1000)
+      const mbps = (e.loaded / 1024 / 1024) / elapsedSec
+      const sentMb = (e.loaded / 1024 / 1024).toFixed(1)
+      const totalMb = (e.total / 1024 / 1024).toFixed(1)
+      const eta = mbps > 0 ? Math.max(0, Math.round((e.total - e.loaded) / 1024 / 1024 / mbps)) : 0
+      setStagePct(pct)
+      setStageInfo(`${sentMb} / ${totalMb} MB · ${mbps.toFixed(2)} MB/s${eta ? ` · ${eta}s left` : ''}`)
+      setProgress(pct < 100 ? `Uploading to AI server (${pct}%)` : 'Upload complete — server is analyzing...')
+    }
+
+    // ── Stage 3 — server-side AI analysis (rotate through pipeline stages) ──
+    const startAnalyzeRotation = () => {
+      setStage('analyze'); setStagePct(0); setStageInfo('')
+      let si = 0
+      setProgress(PROGRESS_STEPS[0])
+      timerRef.current = setInterval(() => {
+        si = (si + 1) % PROGRESS_STEPS.length
+        setProgress(PROGRESS_STEPS[si])
+        setStagePct(Math.min(95, Math.round(((si + 1) / PROGRESS_STEPS.length) * 100)))
+      }, 2200)
+    }
+
     try {
-      const r = await ApiService.analyzeUpload(uploadFile, officer)
+      const r = await ApiService.analyzeUpload(uploadFile, officer, {
+        signal: abortRef.current.signal,
+        onUploadProgress: (e) => {
+          onUploadProgress(e)
+          // Once the bytes are all sent, kick off the analysis-stage rotation.
+          if (e && e.total && e.loaded >= e.total && !timerRef.current) {
+            startAnalyzeRotation()
+          }
+        },
+      })
       setResult(r.data)
     } catch(e) {
-      setError(e.response?.data?.error || 'Server error. Start backend: python server.py')
+      if (e.name === 'CanceledError' || e.code === 'ERR_CANCELED') {
+        setError('Cancelled by user.')
+      } else {
+        setError(e.response?.data?.error || 'Server error. Start backend: python server.py')
+      }
     } finally {
-      clearInterval(timer); setLoading(false); setProgress('')
+      if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
+      setLoading(false); setProgress(''); setStage(''); setStagePct(0); setStageInfo('')
+      abortRef.current = null
     }
   }
 
@@ -247,12 +323,21 @@ export default function Upload() {
                 boxShadow:(!file||loading)?'none':'0 4px 16px rgba(59,130,246,0.3)' }}>
               {loading ? <><Spinner size={16} color="#fff"/>{progress||'Analyzing...'}</> : '◎  Analyze Recording'}
             </button>
-            <button onClick={() => { setFile(null); setResult(null); setError(null) }}
-              style={{ padding:'13px 20px', background:'#1F2937', border:'1px solid #2D3348',
-                borderRadius:'12px', fontSize:'13px', cursor:'pointer', color:'#94A3B8',
-                fontWeight:600 }}>
-              Clear
-            </button>
+            {loading ? (
+              <button onClick={cancel}
+                style={{ padding:'13px 20px', background:'rgba(239,68,68,0.1)',
+                  border:'1px solid rgba(239,68,68,0.4)', borderRadius:'12px',
+                  fontSize:'13px', cursor:'pointer', color:'#EF4444', fontWeight:700 }}>
+                Cancel
+              </button>
+            ) : (
+              <button onClick={() => { setFile(null); setResult(null); setError(null) }}
+                style={{ padding:'13px 20px', background:'#1F2937', border:'1px solid #2D3348',
+                  borderRadius:'12px', fontSize:'13px', cursor:'pointer', color:'#94A3B8',
+                  fontWeight:600 }}>
+                Clear
+              </button>
+            )}
           </div>
 
           {error && (
@@ -266,18 +351,42 @@ export default function Upload() {
         {/* RIGHT: Results */}
         <div>
           {loading && (
-            <div style={{ ...CARD, textAlign:'center', padding:'70px 40px' }}>
-              <div style={{ display:'flex', justifyContent:'center', marginBottom:'22px' }}>
-                <Spinner size={40} color="#3B82F6"/>
+            <div style={{ ...CARD, padding:'40px 32px' }}>
+              <div style={{ display:'flex', justifyContent:'center', marginBottom:'18px' }}>
+                <Spinner size={36} color="#3B82F6"/>
               </div>
-              <div style={{ fontSize:'16px', fontWeight:700, color:'#F1F5F9', marginBottom:'10px' }}>
+              <div style={{ textAlign:'center', fontSize:'16px', fontWeight:700,
+                color:'#F1F5F9', marginBottom:'6px' }}>
                 AI Analyzing {file?.type?.startsWith('video') ? 'Video' : 'Audio'}
               </div>
-              <div style={{ fontSize:'13px', color:'#3B82F6', minHeight:'20px', fontWeight:600 }}>
+              <div style={{ textAlign:'center', fontSize:'12px', color:'#3B82F6',
+                minHeight:'18px', fontWeight:600, marginBottom:'18px' }}>
                 {progress || 'Processing...'}
               </div>
-              <div style={{ fontSize:'11px', color:'#475569', marginTop:'12px' }}>
-                {file?.type?.startsWith('video') ? 'Extracting audio from video · ' : ''}Detecting voice · Transcribing Urdu · Finding violations
+
+              {/* Three-stage progress tracker — extract → upload → analyze */}
+              <StageBar
+                steps={[
+                  { id:'extract', label:'Extract Audio',
+                    show: isVideoFile(file) && !isSmallFile(file) },
+                  { id:'upload',  label:'Upload',  show: true },
+                  { id:'analyze', label:'AI Analyze', show: true },
+                ].filter(s => s.show)}
+                current={stage}
+                percent={stagePct}
+              />
+
+              {stageInfo && (
+                <div style={{ marginTop:'10px', textAlign:'center', fontSize:'11px',
+                  color:'#64748B', fontWeight:600 }}>
+                  {stageInfo}
+                </div>
+              )}
+
+              <div style={{ fontSize:'11px', color:'#475569', marginTop:'18px',
+                textAlign:'center', lineHeight:1.6 }}>
+                Voice detection · Greeting check · Tone analysis ·<br/>
+                588-keyword scan · Score · Officer assessment
               </div>
             </div>
           )}
@@ -1376,6 +1485,52 @@ function VisualAnalysisPanel({ data }) {
           No visual misconduct indicators detected in the video frames.
         </div>
       )}
+    </div>
+  )
+}
+
+
+// Three-stage tracker: Extract → Upload → AI Analyze. Each pill goes
+// grey → blue (active, with live %) → green (done).
+function StageBar({ steps, current, percent }) {
+  const order = steps.map(s => s.id)
+  const activeIdx = order.indexOf(current)
+  return (
+    <div style={{ display:'flex', gap:'8px' }}>
+      {steps.map((s, i) => {
+        const done   = activeIdx > i
+        const active = activeIdx === i
+        const fg     = done ? '#10B981' : active ? '#3B82F6' : '#475569'
+        const bg     = done ? 'rgba(16,185,129,0.10)'
+                     : active ? 'rgba(59,130,246,0.12)'
+                     : '#0B0F1A'
+        const border = done ? 'rgba(16,185,129,0.30)'
+                     : active ? 'rgba(59,130,246,0.35)'
+                     : '#1F2937'
+        const fill   = active ? Math.max(0, Math.min(100, percent || 0)) : (done ? 100 : 0)
+        return (
+          <div key={s.id} style={{ flex:1, position:'relative', background:bg,
+            border:`1px solid ${border}`, borderRadius:'10px', padding:'10px 12px',
+            overflow:'hidden' }}>
+            <div style={{ position:'absolute', left:0, top:0, bottom:0,
+              width:`${fill}%`, background: active ? 'rgba(59,130,246,0.18)'
+                : done ? 'rgba(16,185,129,0.16)' : 'transparent',
+              transition:'width .25s linear' }}/>
+            <div style={{ position:'relative', display:'flex',
+              justifyContent:'space-between', alignItems:'center', gap:'6px' }}>
+              <span style={{ fontSize:'11px', fontWeight:700, color:fg,
+                letterSpacing:'0.04em' }}>
+                {done ? '✓ ' : active ? '● ' : '○ '}{s.label}
+              </span>
+              {active && percent > 0 && (
+                <span style={{ fontSize:'10px', fontWeight:700, color:fg }}>
+                  {Math.round(percent)}%
+                </span>
+              )}
+            </div>
+          </div>
+        )
+      })}
     </div>
   )
 }

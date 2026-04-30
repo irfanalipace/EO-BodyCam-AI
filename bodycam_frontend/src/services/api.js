@@ -30,12 +30,15 @@ export const ApiService = {
   analyzeSample: (filename, oid = 'EO_001') =>
     api.post('/api/analyze/sample', { filename, officer_id: oid }),
 
-  analyzeUpload: (file, oid) => {
+  analyzeUpload: (file, oid, opts = {}) => {
+    const { onUploadProgress, signal } = opts
     const form = new FormData()
     form.append('audio',      file)
     form.append('officer_id', oid)
     return api.post('/api/analyze/upload', form, {
-      timeout: 300000,  // 5 minutes for large audio files
+      timeout: 600000,  // 10 minutes — long bodycam clips with full Gemini analysis
+      onUploadProgress,
+      signal,
     })
   },
 

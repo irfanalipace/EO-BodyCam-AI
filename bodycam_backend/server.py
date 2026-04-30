@@ -8,7 +8,7 @@ Categories: RISHWAT, DHAMKI, GALI, RUDE_BEHAVIOR, HARASSMENT,
            GALAT_CHALLAN, ANGRY_TONE, POWER_ABUSE, INTIMIDATION, UNPROFESSIONAL
 Severity: NORMAL / WARNING / CRITICAL
 """
-import os, json, pickle, time, uuid, tempfile
+import os, json, pickle, time, uuid, tempfile, threading, hashlib, shutil
 try:
     from dotenv import load_dotenv
     # Load .env sitting next to this file, regardless of the shell's CWD.
@@ -31,8 +31,12 @@ BASE    = os.path.dirname(os.path.abspath(__file__))
 MODELS  = os.path.join(BASE, "models")
 SAMPLES = os.path.join(BASE, "audio_samples")
 UPLOADS = os.path.join(BASE, "uploads")
+WATCH   = os.path.join(BASE, "watch")            # drop videos here for auto-analysis
+WATCH_DONE = os.path.join(BASE, "watch_done")    # processed files moved here
 SR      = 16000
 os.makedirs(UPLOADS, exist_ok=True)
+os.makedirs(WATCH,      exist_ok=True)
+os.makedirs(WATCH_DONE, exist_ok=True)
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = "eo-bodycam-v50"
@@ -2989,6 +2993,348 @@ def livestream_chunk():
             os.unlink(path)
 
 
+# ═══════════════════════════════════════════════════════════════
+#  WATCH-FOLDER AUTO ANALYSIS
+#  Drop a video / audio file into bodycam_backend/watch/ and the
+#  background worker picks it up, runs the full pipeline, and emits
+#  SocketIO events so the frontend updates live.
+# ═══════════════════════════════════════════════════════════════
+WATCH_RESULTS = []      # list of dicts: {file_id, filename, status, ...}
+WATCH_LOCK    = threading.Lock()
+WATCH_QUEUE   = []      # list of full paths waiting to be processed
+WATCH_SEEN    = set()   # keys = "name|size|mtime" we have already enqueued
+WATCH_STATE   = {
+    "running":    True,
+    "last_scan":  0.0,
+    "scan_every": 3.0,
+    "folder":     WATCH,
+    "done_folder": WATCH_DONE,
+    "default_officer_id": "EO_001",
+}
+
+_MEDIA_EXTS = (
+    ".mp4", ".webm", ".mov", ".avi", ".mkv", ".3gp", ".flv", ".wmv", ".m4v",
+    ".wav", ".mp3", ".ogg", ".m4a", ".flac", ".aac", ".opus", ".wma",
+)
+
+
+def _watch_key(path):
+    try:
+        st = os.stat(path)
+        return f"{os.path.basename(path)}|{st.st_size}|{int(st.st_mtime)}"
+    except OSError:
+        return None
+
+
+def _watch_file_id(path):
+    h = hashlib.md5(_watch_key(path).encode("utf-8")).hexdigest()[:10]
+    return h.upper()
+
+
+def _watch_summary(item):
+    """Compact card-friendly view of a watch result for /api/watch/list."""
+    r = item.get("result") or {}
+    viols = r.get("violations") or []
+    return {
+        "file_id":          item["file_id"],
+        "filename":         item["filename"],
+        "status":           item["status"],         # queued | analyzing | done | error
+        "queued_at":        item.get("queued_at"),
+        "started_at":       item.get("started_at"),
+        "finished_at":      item.get("finished_at"),
+        "size_bytes":       item.get("size_bytes", 0),
+        "duration_sec":     r.get("total_duration_sec"),
+        "officer_id":       r.get("officer_id"),
+        "officer_name":     r.get("officer_name"),
+        "officer_badge":    r.get("officer_badge"),
+        "media_type":       r.get("media_type"),
+        "severity":         r.get("severity"),
+        "total_score":      r.get("total_score"),
+        "tone_score":       r.get("tone_score"),
+        "keyword_score":    r.get("keyword_score"),
+        "tone_label":       r.get("tone_label"),
+        "violations_count": len(viols),
+        "top_violations":   [
+            {"type": v.get("type"), "severity": v.get("severity"),
+             "label": v.get("label"), "score": v.get("score")}
+            for v in viols[:3]
+        ],
+        "behavior_rating":  (r.get("behavior_assessment") or {}).get("overall_rating"),
+        "transcript_preview": (r.get("transcript") or "")[:240],
+        "error":            item.get("error"),
+    }
+
+
+def _watch_emit(event, data):
+    try:
+        socketio.emit(event, data)
+    except Exception:
+        pass
+
+
+def _watch_enqueue(path):
+    """Add a new file to the queue if we haven't seen it before."""
+    key = _watch_key(path)
+    if not key:
+        return False
+    with WATCH_LOCK:
+        if key in WATCH_SEEN:
+            return False
+        WATCH_SEEN.add(key)
+        try:
+            size = os.path.getsize(path)
+        except OSError:
+            size = 0
+        item = {
+            "file_id":    _watch_file_id(path),
+            "filename":   os.path.basename(path),
+            "path":       path,
+            "size_bytes": size,
+            "status":     "queued",
+            "queued_at":  time.time(),
+            "result":     None,
+            "error":      None,
+        }
+        WATCH_RESULTS.insert(0, item)
+        WATCH_QUEUE.append(path)
+    print(f"[watch] queued: {os.path.basename(path)} ({size/1024/1024:.1f} MB)", flush=True)
+    _watch_emit("watch_queued", _watch_summary(item))
+    return True
+
+
+def _watch_find_item(path):
+    for it in WATCH_RESULTS:
+        if it["path"] == path:
+            return it
+    return None
+
+
+def _watch_is_stable(path, settle_sec=1.5):
+    """Skip files still being copied — wait until size stops changing."""
+    try:
+        s1 = os.path.getsize(path)
+    except OSError:
+        return False
+    time.sleep(settle_sec)
+    try:
+        s2 = os.path.getsize(path)
+    except OSError:
+        return False
+    return s1 == s2 and s1 > 0
+
+
+def _watch_scanner():
+    """Poll the watch folder every WATCH_STATE['scan_every'] seconds."""
+    print(f"[watch] scanner started — folder={WATCH}", flush=True)
+    while WATCH_STATE["running"]:
+        try:
+            WATCH_STATE["last_scan"] = time.time()
+            if os.path.isdir(WATCH):
+                for name in sorted(os.listdir(WATCH)):
+                    fp = os.path.join(WATCH, name)
+                    if not os.path.isfile(fp):
+                        continue
+                    if not name.lower().endswith(_MEDIA_EXTS):
+                        continue
+                    if _watch_key(fp) in WATCH_SEEN:
+                        continue
+                    if not _watch_is_stable(fp):
+                        continue
+                    _watch_enqueue(fp)
+        except Exception as e:
+            print(f"[watch] scanner error: {e}", flush=True)
+        time.sleep(WATCH_STATE["scan_every"])
+
+
+def _watch_worker():
+    """Pull from queue, run the full analysis pipeline, store result."""
+    print(f"[watch] worker started", flush=True)
+    while WATCH_STATE["running"]:
+        path = None
+        with WATCH_LOCK:
+            if WATCH_QUEUE:
+                path = WATCH_QUEUE.pop(0)
+        if not path:
+            time.sleep(0.5)
+            continue
+        item = _watch_find_item(path)
+        if not item:
+            continue
+
+        item["status"]     = "analyzing"
+        item["started_at"] = time.time()
+        _watch_emit("watch_started", _watch_summary(item))
+        print(f"[watch] analyzing: {item['filename']}", flush=True)
+
+        try:
+            audio, sr_, is_video = _load_media(path, item["filename"])
+
+            # Run visual analysis in parallel with the audio pipeline (same as
+            # /api/analyze/upload) so wall-clock = max(audio, video).
+            video_future = None
+            if is_video:
+                from concurrent.futures import ThreadPoolExecutor
+                _ex = ThreadPoolExecutor(max_workers=1)
+                video_future = _ex.submit(_gemini_video_analysis, path)
+
+            officer_id = WATCH_STATE.get("default_officer_id") or "EO_001"
+            result = run_analysis(audio, sr_, officer_id,
+                                  source="watch_folder",
+                                  filename=item["filename"])
+
+            if isinstance(result, dict):
+                result["media_type"] = "video" if is_video else "audio"
+                if is_video:
+                    va, status, err = {}, "ok", ""
+                    try:
+                        va = (video_future.result(timeout=360) if video_future else {}) or {}
+                        if not va:
+                            status = "empty"
+                            err = "Gemini returned no visual analysis."
+                    except Exception as _ve:
+                        status = "error"
+                        err = str(_ve)[:200]
+                    va.setdefault("_status", status)
+                    if err:
+                        va["_status_message"] = err
+                    result["video_analysis"] = va
+
+            item["result"]      = result
+            item["status"]      = "done"
+            item["finished_at"] = time.time()
+            print(f"[watch] done: {item['filename']} → {result.get('severity')} "
+                  f"({result.get('total_score')}/100)", flush=True)
+            _watch_emit("watch_finished", _watch_summary(item))
+
+            # Move processed file to watch_done/ so the folder stays clean.
+            try:
+                dest = os.path.join(WATCH_DONE, item["filename"])
+                base, ext = os.path.splitext(item["filename"])
+                idx = 1
+                while os.path.exists(dest):
+                    dest = os.path.join(WATCH_DONE, f"{base}_{idx}{ext}")
+                    idx += 1
+                shutil.move(path, dest)
+                item["path"] = dest
+            except Exception as _mv:
+                print(f"[watch] move error (non-fatal): {_mv}", flush=True)
+
+        except Exception as e:
+            item["status"]      = "error"
+            item["error"]       = str(e)[:300]
+            item["finished_at"] = time.time()
+            print(f"[watch] error on {item['filename']}: {e}", flush=True)
+            _watch_emit("watch_failed", _watch_summary(item))
+
+
+def start_watch_threads():
+    threading.Thread(target=_watch_scanner, name="watch-scanner", daemon=True).start()
+    threading.Thread(target=_watch_worker,  name="watch-worker",  daemon=True).start()
+
+
+@app.route("/api/watch/status")
+def watch_status():
+    pending = sum(1 for it in WATCH_RESULTS if it["status"] == "queued")
+    analyzing = sum(1 for it in WATCH_RESULTS if it["status"] == "analyzing")
+    done = sum(1 for it in WATCH_RESULTS if it["status"] == "done")
+    err  = sum(1 for it in WATCH_RESULTS if it["status"] == "error")
+    return jsonify({
+        "running":     WATCH_STATE["running"],
+        "folder":      WATCH_STATE["folder"],
+        "done_folder": WATCH_STATE["done_folder"],
+        "scan_every":  WATCH_STATE["scan_every"],
+        "last_scan":   WATCH_STATE["last_scan"],
+        "default_officer_id": WATCH_STATE["default_officer_id"],
+        "counts": {
+            "total":     len(WATCH_RESULTS),
+            "queued":    pending,
+            "analyzing": analyzing,
+            "done":      done,
+            "error":     err,
+        },
+    })
+
+
+@app.route("/api/watch/list")
+def watch_list():
+    sev = (request.args.get("severity") or "").upper()
+    status = (request.args.get("status") or "").lower()
+    items = [_watch_summary(it) for it in WATCH_RESULTS]
+    if sev:
+        items = [i for i in items if (i.get("severity") or "") == sev]
+    if status:
+        items = [i for i in items if (i.get("status") or "") == status]
+    return jsonify({"items": items, "total": len(items)})
+
+
+@app.route("/api/watch/result/<file_id>")
+def watch_result(file_id):
+    fid = file_id.upper()
+    for it in WATCH_RESULTS:
+        if it["file_id"] == fid:
+            return jsonify({
+                "file_id":   it["file_id"],
+                "filename":  it["filename"],
+                "status":    it["status"],
+                "queued_at":   it.get("queued_at"),
+                "started_at":  it.get("started_at"),
+                "finished_at": it.get("finished_at"),
+                "size_bytes":  it.get("size_bytes"),
+                "error":     it.get("error"),
+                "result":    it.get("result"),
+            })
+    return jsonify({"error": "Not found"}), 404
+
+
+@app.route("/api/watch/rescan", methods=["POST"])
+def watch_rescan():
+    """Force an immediate scan instead of waiting for the next tick."""
+    found = 0
+    if os.path.isdir(WATCH):
+        for name in sorted(os.listdir(WATCH)):
+            fp = os.path.join(WATCH, name)
+            if not os.path.isfile(fp):
+                continue
+            if not name.lower().endswith(_MEDIA_EXTS):
+                continue
+            if _watch_key(fp) in WATCH_SEEN:
+                continue
+            if _watch_enqueue(fp):
+                found += 1
+    return jsonify({"queued_now": found, "queue_size": len(WATCH_QUEUE)})
+
+
+@app.route("/api/watch/result/<file_id>", methods=["DELETE"])
+def watch_delete(file_id):
+    fid = file_id.upper()
+    with WATCH_LOCK:
+        for i, it in enumerate(WATCH_RESULTS):
+            if it["file_id"] == fid:
+                WATCH_RESULTS.pop(i)
+                return jsonify({"removed": fid})
+    return jsonify({"error": "Not found"}), 404
+
+
+@app.route("/api/watch/config", methods=["POST"])
+def watch_config():
+    data = request.get_json() or {}
+    if "default_officer_id" in data:
+        oid = (data["default_officer_id"] or "").strip()
+        if oid:
+            WATCH_STATE["default_officer_id"] = oid
+    if "scan_every" in data:
+        try:
+            v = float(data["scan_every"])
+            if 1.0 <= v <= 60.0:
+                WATCH_STATE["scan_every"] = v
+        except (TypeError, ValueError):
+            pass
+    return jsonify({
+        "default_officer_id": WATCH_STATE["default_officer_id"],
+        "scan_every":         WATCH_STATE["scan_every"],
+    })
+
+
 @socketio.on("connect")
 def on_connect():
     emit("connected", {"message": "EO Bodycam AI v5.0 ready — Complete Monitoring Active"})
@@ -3037,7 +3383,10 @@ if __name__ == "__main__":
     print(f"{'─'*60}")
     print(f" Tone detection: Acoustic-based (energy, pitch, agitation)")
     print(f" Enrolled pitch: {ENROLLED_PITCH:.1f}Hz")
+    print(f" Watch folder:   {WATCH}")
+    print(f" Watch done:     {WATCH_DONE}")
     print(f" http://localhost:5050")
     print(f"{'='*60}\n")
+    start_watch_threads()
     socketio.run(app, host="0.0.0.0", port=5050, debug=False,
                  allow_unsafe_werkzeug=True)
