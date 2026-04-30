@@ -76,6 +76,14 @@ export const ApiService = {
   },
 
   geminiHealth: () => dotnetApi.get('/api/analyse/health'),
+
+  // ── Watch-folder auto-analysis (drop video → backend analyzes) ────
+  watchStatus:  ()                    => api.get('/api/watch/status'),
+  watchList:    (params = {})         => api.get('/api/watch/list', { params }),
+  watchResult:  (fileId)              => api.get(`/api/watch/result/${fileId}`),
+  watchRescan:  ()                    => api.post('/api/watch/rescan'),
+  watchDelete:  (fileId)              => api.delete(`/api/watch/result/${fileId}`),
+  watchConfig:  (cfg)                 => api.post('/api/watch/config', cfg),
 }
 
 export default ApiService
